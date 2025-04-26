@@ -1,0 +1,58 @@
+// .vscode/tasks.json
+{
+  "version": "2.0.0",
+  "tasks": [
+    // Your existing compile/watch tasks go here
+    // Example watch task that might cause the error:
+    {
+    "type": "npm",
+    "script": "watch",
+    "group": "build",
+    "isBackground": true,
+    "label": "npm: watch",
+    "detail": "Run the esbuild watch process"
+    }
+    // ... other tasks ...
+  ],
+  // --- ADD THIS SECTION ---
+  "problemMatchers": [
+    {
+      "name": "esbuild", // Defines the base $esbuild matcher
+      "owner": "esbuild",
+      "source": "esbuild", // Added source for clarity
+      "fileLocation": "relative",
+      "pattern": {
+        "regexp": "^\\s+>\\s+(.*):(\\d+):(\\d+):\\s+(error|warning|info):\\s+(.*)$",
+        "file": 1,
+        "line": 2,
+        "column": 3,
+        "severity": 4,
+        "message": 5
+      }
+    },
+    {
+      "name": "esbuild-watch", // Defines the $esbuild-watch matcher
+      "owner": "esbuild-watch", // Distinct owner
+      "source": "esbuild", // Added source for clarity
+      "fileLocation": "relative",
+      "background": {
+        "activeOnStart": true,
+        "beginsPattern": {
+          "regexp": "^\\[watch\\] build finished|build started" // Adjust if your esbuild watch output differs
+        },
+        "endsPattern": {
+          "regexp": "^\\[watch\\] build finished|waiting for changes" // Adjust if your esbuild watch output differs
+        }
+      },
+      "pattern": {
+        "regexp": "^\\s+>\\s+(.*):(\\d+):(\\d+):\\s+(error|warning|info):\\s+(.*)$",
+        "file": 1,
+        "line": 2,
+        "column": 3,
+        "severity": 4,
+        "message": 5
+      }
+    }
+  ]
+  // --- END ADDED SECTION ---
+}

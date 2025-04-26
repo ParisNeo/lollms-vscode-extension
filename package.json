@@ -1,0 +1,185 @@
+{
+  "name": "lollms-copilot",
+  "displayName": "LOLLMS Copilot",
+  "description": "Integrates lollms-server for code generation, modification, and commit messages.",
+  "version": "0.1.0",
+  "publisher": "ParisNeo",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "SCM Providers",
+    "Other"
+  ],
+  "icon": "images/icon.png",
+  "activationEvents": [
+    "workspaceContains:.git"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "lollms.generateCodeFromComment",
+        "title": "LOLLMS: Generate Code from Preceding Comment/Docstring",
+        "category": "LOLLMS"
+      },
+      {
+        "command": "lollms.generateWithContext",
+        "title": "LOLLMS: Generate/Modify Code with Context",
+        "category": "LOLLMS"
+      },
+      {
+        "command": "lollms.generateCommitMessage",
+        "title": "LOLLMS: Generate Commit Message",
+        "category": "LOLLMS",
+        "icon": "$(zap)"
+      },
+      {
+        "command": "lollms.showSetupWizard",
+        "title": "LOLLMS: Show Setup Wizard / Reconfigure Server",
+        "category": "LOLLMS"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "lollms.generateCodeFromComment",
+          "when": "editorHasSelection || !editorHasSelection",
+          "group": "navigation@1"
+        },
+        {
+          "command": "lollms.generateWithContext",
+          "when": "editorHasSelection || !editorHasSelection",
+          "group": "navigation@2"
+        },
+        {
+          "command": "lollms.showSetupWizard",
+          "when": "true"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "lollms.generateCodeFromComment",
+          "when": "editorTextFocus"
+        },
+        {
+          "command": "lollms.generateWithContext",
+          "when": "editorTextFocus"
+        },
+        {
+          "command": "lollms.generateCommitMessage",
+          "when": "scmProvider == git"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "lollms.generateCommitMessage",
+          "when": "scmProvider == git",
+          "group": "navigation@1"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "lollms.generateCodeFromComment",
+        "key": "ctrl+alt+l ctrl+g",
+        "mac": "cmd+alt+l cmd+g",
+        "when": "editorTextFocus"
+      }
+    ],
+    "configuration": {
+      "title": "LOLLMS Copilot",
+      "properties": {
+        "lollms.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:9600",
+          "description": "Base URL of the running lollms-server (e.g., http://localhost:9600)."
+        },
+        "lollms.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API Key for the lollms-server (if required)."
+        },
+        "lollms.codeGenPromptPrefix": {
+          "type": "string",
+          "default": "Implement the following functionality described in the comment/docstring:\n\n",
+          "description": "Text prepended to the comment/docstring before sending for code generation."
+        },
+        "lollms.codeGenPromptSuffix": {
+          "type": "string",
+          "default": "\n\n```python\n",
+          "description": "Text appended after the comment/docstring for code generation (e.g., hint the language)."
+        },
+        "lollms.contextPromptPrefix": {
+          "type": "string",
+          "default": "Based on the provided file context and the user's request, generate or modify the code as described.\n\n--- CONTEXT FILES ---\n",
+          "description": "Text prepended before file context is included in the prompt."
+        },
+        "lollms.contextPromptSuffix": {
+          "type": "string",
+          "default": "\n--- END CONTEXT FILES ---\n\nUser Request:\n",
+          "description": "Text appended after file context but before the user's specific generation/modification request."
+        },
+        "lollms.commitMsgPromptPrefix": {
+          "type": "string",
+          "default": "Generate a concise Git commit message in the conventional commit format (e.g., feat: ...) that summarizes the following staged changes:\n\n```diff\n",
+          "description": "Text prepended to the git diff for commit message generation."
+        },
+        "lollms.commitMsgPromptSuffix": {
+          "type": "string",
+          "default": "\n```\n\nCommit Message:",
+          "description": "Text appended after the git diff for commit message generation."
+        },
+        "lollms.defaultModelParameters": {
+          "type": "object",
+          "default": {
+            "temperature": 0.3,
+            "max_tokens": 1024
+          },
+          "description": "Default generation parameters for LOLLMS requests (can be overridden)."
+        },
+        "lollms.contextTokenWarningThreshold": {
+          "type": "integer",
+          "default": 100000,
+          "description": "Warn the user if the estimated token count for context generation exceeds this value (very rough estimate)."
+        },
+        "lollms.includeFilePathsInContext": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include the relative file path in the context prompt sent to the LLM."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run esbuild-base -- --minify",
+    "compile": "npm run esbuild-base -- --sourcemap",
+    "watch": "npm run esbuild-base -- --sourcemap --watch",
+    "package": "npm run esbuild-base -- --minify",
+    "esbuild-base": ".\\node_modules\\.bin\\esbuild.cmd ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/node": "18.x",
+    "@types/node-fetch": "^2.6.4",
+    "@types/vscode": "^1.80.0",
+    "@typescript-eslint/eslint-plugin": "^7.10.0",
+    "@typescript-eslint/parser": "^7.10.0",
+    "@vscode/test-cli": "^0.0.9",
+    "@vscode/test-electron": "^2.4.0",
+    "esbuild": "^0.25.3",
+    "eslint": "^8.57.0",
+    "ts-loader": "^9.5.1",
+    "typescript": "^5.4.5",
+    "webpack": "^5.91.0",
+    "webpack-cli": "^5.1.4"
+  },
+  "dependencies": {
+    "node-fetch": "^2.7.0"
+  }
+}
