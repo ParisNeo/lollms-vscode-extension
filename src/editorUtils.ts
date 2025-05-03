@@ -14,6 +14,13 @@ export function findPrecedingCommentBlock(document: vscode.TextDocument, positio
     let inBlockComment = false;
     let blockCommentType: '/*' | '"""' | "'''" | null = null;
 
+    // Adjust starting line if cursor is not at the beginning of the line
+    // If the cursor is within a line, start scan from the line above it.
+    // If the cursor is at the very start of a line (char 0), consider that line itself.
+    const startingLine = position.character > 0 ? position.line - 1 : position.line -1; // Always start scan from line above cursor pos for simplicity now
+
+    currentLine = startingLine;
+
     while (currentLine >= 0 && linesScanned < MAX_COMMENT_SCAN_LINES) {
         const line = document.lineAt(currentLine);
         const lineText = line.text.trim();
@@ -22,12 +29,10 @@ export function findPrecedingCommentBlock(document: vscode.TextDocument, positio
             commentLines.unshift(line.text); // Add full line including indentation
             if (blockCommentType === '/*' && lineText.includes('/*')) {
                 // Found start of /* block
-                // Extract relevant part if start is not at beginning of line
                 const blockStartIndex = line.text.indexOf('/*');
                 commentLines[0] = line.text.substring(blockStartIndex);
                 break; // Block found
             } else if ((blockCommentType === '"""' && lineText.startsWith('"""')) || (blockCommentType === "'''" && lineText.startsWith("'''"))) {
-                 // Found start of """/''' block
                  break; // Block found
             }
         } else {
@@ -35,14 +40,13 @@ export function findPrecedingCommentBlock(document: vscode.TextDocument, positio
             if (lineText.endsWith('*/')) {
                 inBlockComment = true;
                 blockCommentType = '/*';
-                commentLines.unshift(line.text); // Add this line
-                // If the start is also on this line
+                commentLines.unshift(line.text);
                 if (lineText.includes('/*') && lineText.indexOf('/*') < lineText.indexOf('*/')) {
                     const blockStartIndex = line.text.indexOf('/*');
-                    commentLines[0] = line.text.substring(blockStartIndex); // Adjust first line
+                    commentLines[0] = line.text.substring(blockStartIndex);
                     break;
                 }
-            } else if (lineText.endsWith('"""') && lineText.length > 3 && !lineText.startsWith('"""')) { // Avoid single-line docstring as block end
+            } else if (lineText.endsWith('"""') && lineText.length > 3 && !lineText.startsWith('"""')) {
                 inBlockComment = true;
                 blockCommentType = '"""';
                 commentLines.unshift(line.text);
@@ -52,37 +56,37 @@ export function findPrecedingCommentBlock(document: vscode.TextDocument, positio
                 commentLines.unshift(line.text);
             } else if (lineText.startsWith('#')) {
                 commentLines.unshift(line.text);
-                // Check if the previous line was also a comment
                 if (currentLine > 0) {
                     const prevLineText = document.lineAt(currentLine - 1).text.trim();
-                    if (!prevLineText.startsWith('#')) {
-                        break; // End of contiguous # comment block
+                    if (!prevLineText.startsWith('#') && prevLineText !== "") { // Stop if previous line is not '#' or empty
+                        break;
                     }
                 } else {
-                     break; // Reached top of file
+                     break;
                 }
             } else if (lineText.startsWith('//')) {
                  commentLines.unshift(line.text);
-                 // Check if the previous line was also a comment
                  if (currentLine > 0) {
                      const prevLineText = document.lineAt(currentLine - 1).text.trim();
-                     if (!prevLineText.startsWith('//')) {
-                         break; // End of contiguous // comment block
+                     if (!prevLineText.startsWith('//') && prevLineText !== "") { // Stop if previous line is not '//' or empty
+                         break;
                      }
                  } else {
-                      break; // Reached top of file
+                      break;
                  }
             } else if (lineText.startsWith('"""') && lineText.endsWith('"""') && lineText.length >= 6) {
-                 // Single-line docstring """..."""
                  commentLines.unshift(line.text);
                  break;
             } else if (lineText.startsWith("'''") && lineText.endsWith("'''") && lineText.length >= 6) {
-                 // Single-line docstring '''...'''
                  commentLines.unshift(line.text);
                  break;
-            } else if (lineText) {
-                 // Found a non-empty, non-comment line before finding a comment start
+            } else if (lineText) { // Found a non-empty, non-comment line
                  break;
+            } else {
+                // Empty line encountered - potentially break comment block
+                 if (commentLines.length > 0 && !inBlockComment) {
+                     break; // If we already found single-line comments, an empty line breaks the block
+                 }
             }
         }
 
@@ -94,7 +98,9 @@ export function findPrecedingCommentBlock(document: vscode.TextDocument, positio
         let fullComment = commentLines.join('\n');
         // Basic cleaning of comment markers for the LLM
         if (blockCommentType === '/*') {
-            fullComment = fullComment.replace(/^\s*\/\*+/, '').replace(/\*+\/\s*$/, '');
+            fullComment = fullComment.replace(/^\s*\/\*+?/, '').replace(/\*+?\/\s*$/, '');
+             // Also remove leading * on intermediate lines
+            fullComment = fullComment.split('\n').map(l => l.replace(/^\s*\*\s?/, '')).join('\n');
         } else if (blockCommentType === '"""') {
             fullComment = fullComment.replace(/^\s*"""/, '').replace(/"""\s*$/, '');
         } else if (blockCommentType === "'''") {
@@ -105,66 +111,65 @@ export function findPrecedingCommentBlock(document: vscode.TextDocument, positio
         return fullComment.trim();
     }
 
+    console.log(`No preceding comment found within ${MAX_COMMENT_SCAN_LINES} lines of line ${position.line + 1}.`);
     return null; // No preceding comment found within scan limit
 }
 
 
 /**
  * Inserts the generated code at the position immediately following the comment block.
- * Tries to maintain indentation.
+ * Tries to maintain indentation based on the line where the comment block started.
+ * @param editor The active TextEditor.
+ * @param commentStartPosition The starting position of the found comment block (used for indentation).
+ * @param insertLineNum The line number where insertion should begin (usually line after comment end).
+ * @param generatedCode The code string to insert.
  */
-export async function insertGeneratedCode(editor: vscode.TextEditor, commentEndPosition: vscode.Position, generatedCode: string): Promise<void> {
+export async function insertGeneratedCode(
+    editor: vscode.TextEditor,
+    commentStartPositionLine: number, // Line where the comment block started
+    insertLineNum: number, // Line number *after* the comment block where insertion should happen
+    generatedCode: string
+): Promise<void> {
     const document = editor.document;
-    // Position to insert: line after the comment block, maintaining indentation
-    const insertLine = commentEndPosition.line + 1;
-    let insertPosition: vscode.Position;
     let leadingWhitespace = "";
 
-    // Try to get indentation from the comment's first line or the line after
-     if (commentEndPosition.line >= 0) {
-        const commentFirstLine = document.lineAt(commentEndPosition.line - (commentEndPosition.character === 0 ? 1 : 0)); // Get line where comment might start
-        const match = commentFirstLine.text.match(/^(\s*)/);
+    // Get indentation from the first line of the comment block
+    if (commentStartPositionLine >= 0 && commentStartPositionLine < document.lineCount) {
+        const commentFirstLineText = document.lineAt(commentStartPositionLine).text;
+        const match = commentFirstLineText.match(/^(\s*)/);
         if (match) {
             leadingWhitespace = match[1];
         }
+    } else {
+        // Fallback: if comment start is unknown or invalid, use indentation of insertion line
+        if (insertLineNum >= 0 && insertLineNum < document.lineCount) {
+            const insertLineText = document.lineAt(insertLineNum).text;
+            const match = insertLineText.match(/^(\s*)/);
+            if (match) {
+                leadingWhitespace = match[1];
+            }
+        }
     }
 
-    insertPosition = new vscode.Position(insertLine, leadingWhitespace.length);
+    let insertPosition = new vscode.Position(insertLineNum, 0); // Start insertion at beginning of the line
 
-    // Ensure the insert line exists, otherwise insert at the end
-    if (insertLine >= document.lineCount) {
-        // Need to add a newline first if inserting at the very end
-        await editor.edit(editBuilder => {
-            editBuilder.insert(new vscode.Position(document.lineCount, 0), '\n');
-        });
-        insertPosition = new vscode.Position(document.lineCount, 0); // Insert at start of new line
-        leadingWhitespace = ""; // No indentation needed at EOF
-    }
-
-
-    // Indent the generated code
+    // Indent the generated code block, applying the determined whitespace to each line
     const indentedCode = generatedCode
         .split('\n')
-        .map((line, index) => (index === 0 ? '' : leadingWhitespace) + line) // Indent lines after the first
+        .map(line => leadingWhitespace + line) // Add indent to *every* line
         .join('\n');
 
     // Perform the edit
     await editor.edit(editBuilder => {
-        // Add a newline before the code if the target line isn't empty
-        let prefix = "\n";
-         if (insertLine < document.lineCount && !document.lineAt(insertLine).isEmptyOrWhitespace) {
-             prefix = "\n"; // Add newline if inserting into existing content
-         } else if (insertLine >= document.lineCount) {
-              prefix = ""; // No extra newline needed if inserting at end
-         } else {
-              prefix = ""; // Inserting on an empty line, no prefix needed
-         }
-
-        editBuilder.insert(insertPosition, prefix + indentedCode);
+        // Add a newline *before* the indented code block to ensure separation
+        editBuilder.insert(insertPosition, '\n' + indentedCode);
     });
 
-    // Optional: Format the inserted code
-    // await vscode.commands.executeCommand('editor.action.formatDocument');
+     // Optional: Format the selection or document
+     // Consider formatting just the inserted range if possible for performance
+     // await vscode.commands.executeCommand('editor.action.formatSelection');
+     // or
+     // await vscode.commands.executeCommand('editor.action.formatDocument');
 }
 
 /**
@@ -172,8 +177,9 @@ export async function insertGeneratedCode(editor: vscode.TextEditor, commentEndP
  */
 export async function readFileContent(uri: vscode.Uri): Promise<string | null> {
     try {
-        // Use fs module provided by Node.js environment in VS Code extensions
-        const content = await fs.readFile(uri.fsPath, 'utf-8');
+        // Use vscode's workspace filesystem API - more robust in virtual workspaces etc.
+        const contentBytes = await vscode.workspace.fs.readFile(uri);
+        const content = Buffer.from(contentBytes).toString('utf-8');
         return content;
     } catch (error: any) {
         console.error(`Error reading file ${uri.fsPath}:`, error);
@@ -183,37 +189,28 @@ export async function readFileContent(uri: vscode.Uri): Promise<string | null> {
 }
 
 /**
- * Extracts the content of the first code block matching a specific language tag (e.g., 'python').
- * Handles optional language tags and basic markdown fences.
+ * Extracts the content of the first code block potentially matching a language tag.
+ * Handles ```lang ... ``` and ``` ... ``` fences. Removes the fences and language tag.
  * @param text The text potentially containing code blocks.
- * @param language The language identifier to look for (e.g., 'python'). Case-insensitive.
- * @returns The content of the first matching code block, or null if not found.
+ * @returns The content of the first found code block, or the original text if no block detected.
  */
-export function extractFirstCodeBlock(text: string, language: string): string | null {
-    // Regex to find the first block with the specified language tag (case-insensitive)
-    // It captures the content between the fences.
-    // Handles optional whitespace after ```lang
-    // [\s\S]*? makes it non-greedy to capture only the first block's content.
-    const regex = new RegExp(
-        "```" + language + "\\s*\\n?([\\s\\S]*?)\\s*```",
-        "i" // Case-insensitive flag for the language tag
-    );
+export function extractFirstCodeBlock(text: string): string {
+    // Regex to find the first block, capturing the language tag (optional) and content
+    // Handles optional whitespace after ```lang\n
+    // [\s\S]*? makes it non-greedy
+    // Accounts for potentially missing newline after opening fence
+    const regex = /^```(?:[\w-]+)?\s*?\n([\s\S]*?)\n?```$/m;
 
     const match = text.match(regex);
 
     if (match && match[1]) {
-        // Return the captured group (the content), trimming potential extra whitespace
+        // Return the captured group (the content), trimming whitespace
+        console.log("Found and extracted code block content.");
         return match[1].trim();
     }
 
-    // Fallback: If no language tag matched, try finding the *first* block regardless of tag,
-    // but only if the language requested was generic like 'code' or if we assume python
-    // For now, let's only match the explicitly tagged block for reliability.
-    // If needed later, add fallback logic here:
-    // const genericRegex = /```.*\n?([\s\S]*?)\s*```/;
-    // const genericMatch = text.match(genericRegex);
-    // if (genericMatch && genericMatch[1]) { return genericMatch[1].trim(); }
-
-    console.warn(`No code block found with language tag '${language}' in text.`);
-    return null;
+    // Fallback: If no fenced block is found, assume the whole response might be code,
+    // but trim it to remove potential leading/trailing explanations.
+    console.warn("No fenced code block found in response. Returning trimmed text.");
+    return text.trim();
 }

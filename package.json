@@ -1,8 +1,8 @@
 {
   "name": "lollms-copilot",
   "displayName": "LOLLMS Copilot",
-  "description": "Integrates lollms-server for code generation, modification, and commit messages.",
-  "version": "0.1.0",
+  "description": "Integrates lollms-server for code generation, modification, and commit messages using multimodal context.",
+  "version": "0.2.0",
   "publisher": "ParisNeo",
   "engines": {
     "vscode": "^1.80.0"
@@ -14,10 +14,30 @@
   ],
   "icon": "images/icon.png",
   "activationEvents": [
-    "workspaceContains:.git"
+    "onView:lollmsContextView"
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "lollms-copilot-view-container",
+          "title": "LOLLMS",
+          "icon": "$(lightbulb-sparkle)"
+        }
+      ]
+    },
+    "views": {
+      "lollms-copilot-view-container": [
+        {
+          "id": "lollmsContextView",
+          "name": "Context Files",
+          "icon": "$(files)",
+          "contextualTitle": "LOLLMS Context",
+          "type": "tree"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "lollms.generateCodeFromComment",
@@ -26,7 +46,7 @@
       },
       {
         "command": "lollms.generateWithContext",
-        "title": "LOLLMS: Generate/Modify Code with Context",
+        "title": "LOLLMS: Generate/Modify Code using Managed Context",
         "category": "LOLLMS"
       },
       {
@@ -39,6 +59,42 @@
         "command": "lollms.showSetupWizard",
         "title": "LOLLMS: Show Setup Wizard / Reconfigure Server",
         "category": "LOLLMS"
+      },
+      {
+        "command": "lollms.context.addCurrentFile",
+        "title": "LOLLMS: Add Current File to Context",
+        "category": "LOLLMS",
+        "icon": "$(add)"
+      },
+      {
+        "command": "lollms.context.addAllProjectFiles",
+        "title": "LOLLMS: Add All Project Files to Context (Respects Ignore)",
+        "category": "LOLLMS",
+        "icon": "$(folder-library)"
+      },
+      {
+        "command": "lollms.context.removeFile",
+        "title": "LOLLMS: Remove File from Context",
+        "category": "LOLLMS",
+        "icon": "$(remove)"
+      },
+      {
+        "command": "lollms.context.clearAll",
+        "title": "LOLLMS: Clear All Context Files",
+        "category": "LOLLMS",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "lollms.context.refreshView",
+        "title": "LOLLMS: Refresh Context View",
+        "category": "LOLLMS",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "lollms.context.viewAndCopy",
+        "title": "LOLLMS: View/Copy Full Context Prompt",
+        "category": "LOLLMS",
+        "icon": "$(clippy)"
       }
     ],
     "menus": {
@@ -46,138 +102,191 @@
         {
           "command": "lollms.generateCodeFromComment",
           "when": "editorHasSelection || !editorHasSelection",
-          "group": "navigation@1"
+          "group": "lollms@1"
         },
         {
           "command": "lollms.generateWithContext",
           "when": "editorHasSelection || !editorHasSelection",
-          "group": "navigation@2"
+          "group": "lollms@2"
         },
         {
-          "command": "lollms.showSetupWizard",
-          "when": "true"
+          "command": "lollms.context.addCurrentFile",
+          "when": "resourceScheme == file",
+          "group": "lollms@3"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "lollms.context.addCurrentFile",
+          "when": "resourceScheme == file",
+          "group": "lollms@1"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "lollms.context.addCurrentFile",
+          "when": "view == lollmsContextView",
+          "group": "navigation@1",
+          "icon": "$(add)",
+          "title": "Add Active File"
+        },
+        {
+          "command": "lollms.context.addAllProjectFiles",
+          "when": "view == lollmsContextView",
+          "group": "navigation@2",
+          "icon": "$(folder-library)",
+          "title": "Add All Project Files"
+        },
+        {
+          "command": "lollms.context.clearAll",
+          "when": "view == lollmsContextView",
+          "group": "navigation@3",
+          "icon": "$(clear-all)",
+          "title": "Clear Context"
+        },
+        {
+          "command": "lollms.context.refreshView",
+          "when": "view == lollmsContextView",
+          "group": "navigation@4",
+          "icon": "$(refresh)",
+          "title": "Refresh View"
+        },
+        {
+          "command": "lollms.context.viewAndCopy",
+          "when": "view == lollmsContextView",
+          "group": "navigation@5",
+          "icon": "$(clippy)",
+          "title": "View/Copy Prompt"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "lollms.context.removeFile",
+          "when": "view == lollmsContextView && viewItem == lollmsContextFile",
+          "group": "inline"
         }
       ],
       "commandPalette": [
-        {
-          "command": "lollms.generateCodeFromComment",
-          "when": "editorTextFocus"
-        },
-        {
-          "command": "lollms.generateWithContext",
-          "when": "editorTextFocus"
-        },
-        {
-          "command": "lollms.generateCommitMessage",
-          "when": "scmProvider == git"
-        }
+        { "command": "lollms.generateCodeFromComment", "when": "editorTextFocus" },
+        { "command": "lollms.generateWithContext", "when": "true" },
+        { "command": "lollms.generateCommitMessage", "when": "scmProvider == git" },
+        { "command": "lollms.showSetupWizard", "when": "true" },
+        { "command": "lollms.context.addCurrentFile", "when": "editorTextFocus || explorerResourceIsFolder == false && resourceScheme == file" },
+        { "command": "lollms.context.addAllProjectFiles", "when": "true" },
+        { "command": "lollms.context.clearAll", "when": "true" },
+        { "command": "lollms.context.refreshView", "when": "true" },
+        { "command": "lollms.context.viewAndCopy", "when": "true" }
       ],
       "scm/title": [
-        {
-          "command": "lollms.generateCommitMessage",
-          "when": "scmProvider == git",
-          "group": "navigation@1"
-        }
+        { "command": "lollms.generateCommitMessage", "when": "scmProvider == git", "group": "navigation@1" }
       ]
     },
     "keybindings": [
-      {
-        "command": "lollms.generateCodeFromComment",
-        "key": "ctrl+alt+l ctrl+g",
-        "mac": "cmd+alt+l cmd+g",
-        "when": "editorTextFocus"
-      }
+      { "command": "lollms.generateCodeFromComment", "key": "ctrl+alt+l ctrl+g", "mac": "cmd+alt+l cmd+g", "when": "editorTextFocus" }
     ],
     "configuration": {
       "title": "LOLLMS Copilot",
       "properties": {
         "lollms.serverUrl": {
           "type": "string",
-          "default": "http://localhost:9600",
-          "description": "Base URL of the running lollms-server (e.g., http://localhost:9600)."
+          "default": "http://localhost:9601",
+          "description": "Base URL of the running lollms-server (e.g., http://localhost:9601)."
         },
         "lollms.apiKey": {
           "type": "string",
           "default": "",
           "description": "API Key for the lollms-server (if required)."
         },
+         "lollms.defaultBindingInstance": {
+          "type": "string",
+          "default": "",
+          "description": "(Required for context size checks) The name of the binding instance (defined in lollms-server's main config and bindings folder) to use for context size checks and potentially default generation if not overridden."
+        },
         "lollms.codeGenPromptPrefix": {
           "type": "string",
           "default": "Implement the following functionality described in the comment/docstring:\n\n",
-          "description": "Text prepended to the comment/docstring before sending for code generation."
+          "description": "Text prepended to the comment/docstring before sending for code generation. Used as part of the 'user_prompt' in the API request."
         },
         "lollms.codeGenPromptSuffix": {
           "type": "string",
           "default": "\n\n```python\n",
-          "description": "Text appended after the comment/docstring for code generation (e.g., hint the language)."
+          "description": "Text appended after the comment/docstring for code generation (e.g., hint the language). Used as part of the 'user_prompt' in the API request."
         },
-        "lollms.contextPromptPrefix": {
+         "lollms.contextPromptPrefix": {
           "type": "string",
           "default": "Based on the provided file context and the user's request, generate or modify the code as described.\n\n--- CONTEXT FILES ---\n",
-          "description": "Text prepended before file context is included in the prompt."
+          "description": "Text prepended before formatted file context is included in the prompt sent to the server's /generate endpoint."
         },
         "lollms.contextPromptSuffix": {
           "type": "string",
           "default": "\n--- END CONTEXT FILES ---\n\nUser Request:\n",
-          "description": "Text appended after file context but before the user's specific generation/modification request."
+          "description": "Text appended after formatted file context but before the user's specific generation/modification request in the prompt sent to the server."
         },
         "lollms.commitMsgPromptPrefix": {
           "type": "string",
           "default": "Generate a concise Git commit message in the conventional commit format (e.g., feat: ...) that summarizes the following staged changes:\n\n```diff\n",
-          "description": "Text prepended to the git diff for commit message generation."
+          "description": "Text prepended to the git diff for commit message generation. Sent as part of the 'user_prompt' to the /generate endpoint."
         },
         "lollms.commitMsgPromptSuffix": {
           "type": "string",
           "default": "\n```\n\nCommit Message:",
-          "description": "Text appended after the git diff for commit message generation."
+          "description": "Text appended after the git diff for commit message generation. Sent as part of the 'user_prompt' to the /generate endpoint."
         },
         "lollms.defaultModelParameters": {
-          "type": "object",
-          "default": {
-            "temperature": 0.3,
-            "max_tokens": 1024
-          },
-          "description": "Default generation parameters for LOLLMS requests (can be overridden)."
+           "type": "object",
+           "default": {
+              "temperature": 0.3,
+              "max_tokens": 2048
+            },
+           "description": "Default generation parameters for LOLLMS API requests (passed in the 'parameters' field of the /generate payload). Can be overridden by personality settings on the server."
         },
-        "lollms.contextTokenWarningThreshold": {
-          "type": "integer",
-          "default": 100000,
-          "description": "Warn the user if the estimated token count for context generation exceeds this value (very rough estimate)."
+        "lollms.contextCharWarningThreshold": {
+            "type": "integer",
+            "default": 100000,
+            "description": "Warn the user if the estimated character count for the context generation prompt (files + instructions) exceeds this value. This is an estimate before tokenization."
         },
         "lollms.includeFilePathsInContext": {
-          "type": "boolean",
-          "default": true,
-          "description": "Include the relative file path in the context prompt sent to the LLM."
+            "type": "boolean",
+            "default": true,
+            "description": "Include the relative file path as a header before each file's content in the context prompt sent to the LLM."
+        },
+        "lollms.contextIgnorePatterns": {
+            "type": "array",
+            "default": [
+                "**/node_modules/**", "**/.git/**", "**/.vscode/**", "**/.svn/**", "**/.hg/**",
+                "**/CVS/**", "**/.DS_Store/**", "**/Thumbs.db/**", "**/*.lock", "**/*.log",
+                "**/*.exe", "**/*.dll", "**/*.so", "**/*.dylib", "**/*.obj", "**/*.o", "**/*.a",
+                "**/*.lib", "**/*.pyc", "**/*.pyo", "**/*.class", "**/*.jar", "**/*.bin",
+                "**/*.pdf", "**/*.png", "**/*.jpg", "**/*.jpeg", "**/*.gif", "**/*.bmp", "**/*.tiff", "**/*.webp",
+                "**/*.mp3", "**/*.wav", "**/*.ogg", "**/*.mp4", "**/*.avi", "**/*.mov", "**/*.wmv",
+                "**/dist/**", "**/build/**", "**/out/**", "**/*.zip", "**/*.tar.gz", "**/*.rar"
+            ],
+            "description": "Glob patterns for files and folders to exclude when using 'Add All Project Files to Context'. Uses VS Code's workspace.findFiles exclusion format.",
+            "items": { "type": "string" }
         }
       }
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run esbuild-base -- --minify",
+    "vscode:prepublish": "npm run package",
     "compile": "npm run esbuild-base -- --sourcemap",
     "watch": "npm run esbuild-base -- --sourcemap --watch",
     "package": "npm run esbuild-base -- --minify",
-    "esbuild-base": ".\\node_modules\\.bin\\esbuild.cmd ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
-    "compile-tests": "tsc -p . --outDir out",
-    "watch-tests": "tsc -p . -w --outDir out",
-    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "esbuild-base": "npx esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
     "lint": "eslint src --ext ts",
     "test": "vscode-test"
   },
   "devDependencies": {
+    "@types/vscode": "^1.80.0",
     "@types/node": "18.x",
     "@types/node-fetch": "^2.6.4",
-    "@types/vscode": "^1.80.0",
     "@typescript-eslint/eslint-plugin": "^7.10.0",
     "@typescript-eslint/parser": "^7.10.0",
+    "eslint": "^8.57.0",
+    "typescript": "^5.4.5",
     "@vscode/test-cli": "^0.0.9",
     "@vscode/test-electron": "^2.4.0",
-    "esbuild": "^0.25.3",
-    "eslint": "^8.57.0",
-    "ts-loader": "^9.5.1",
-    "typescript": "^5.4.5",
-    "webpack": "^5.91.0",
-    "webpack-cli": "^5.1.4"
+    "esbuild": "^0.21.5"
   },
   "dependencies": {
     "node-fetch": "^2.7.0"
