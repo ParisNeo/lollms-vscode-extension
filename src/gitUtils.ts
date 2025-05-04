@@ -50,11 +50,15 @@ export async function getGitAPI(): Promise<API | undefined> {
         if (api.state !== 'initialized') {
              console.warn(`Git API state is '${api.state}'. Waiting briefly...`);
              await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 sec
-             if (api.state !== 'initialized') {
-                  console.error(`Git API did not initialize quickly after activation. State: ${api.state}`);
-                  vscode.window.showWarningMessage('Git extension took too long to initialize. Please try the command again.');
-                  return undefined;
-             }
+             if (api.state === 'uninitialized' || api.state === 'idle') {
+                console.warn(`Git API state is '${api.state}'. Waiting briefly...`);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                if (api.state === 'uninitialized' || api.state === 'idle') { // Re-check
+                     console.error(`Git API did not initialize quickly after activation. State: ${api.state}`);
+                     vscode.window.showWarningMessage('Git extension took too long to initialize. Please try the command again.');
+                     return undefined;
+                }
+            }
         }
         return api;
     } catch (error) {

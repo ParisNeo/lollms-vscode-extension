@@ -1,8 +1,8 @@
 {
   "name": "lollms-copilot",
   "displayName": "LOLLMS Copilot",
-  "description": "Integrates lollms-server for code generation, modification, and commit messages using multimodal context.",
-  "version": "0.2.0",
+  "description": "Integrates lollms-server for code generation, modification, context-aware chat, and commit messages.",
+  "version": "0.5.0",
   "publisher": "ParisNeo",
   "engines": {
     "vscode": "^1.80.0"
@@ -10,12 +10,10 @@
   "categories": [
     "Programming Languages",
     "SCM Providers",
+    "Chat",
     "Other"
   ],
   "icon": "images/icon.png",
-  "activationEvents": [
-    "onView:lollmsContextView"
-  ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -35,147 +33,68 @@
           "icon": "$(files)",
           "contextualTitle": "LOLLMS Context",
           "type": "tree"
+        },
+        {
+          "id": "lollmsChatView",
+          "name": "Chat",
+          "icon": "$(comment-discussion)",
+          "contextualTitle": "LOLLMS Chat",
+          "type": "webview"
         }
       ]
     },
     "commands": [
-      {
-        "command": "lollms.generateCodeFromComment",
-        "title": "LOLLMS: Generate Code from Preceding Comment/Docstring",
-        "category": "LOLLMS"
-      },
-      {
-        "command": "lollms.generateWithContext",
-        "title": "LOLLMS: Generate/Modify Code using Managed Context",
-        "category": "LOLLMS"
-      },
-      {
-        "command": "lollms.generateCommitMessage",
-        "title": "LOLLMS: Generate Commit Message",
-        "category": "LOLLMS",
-        "icon": "$(zap)"
-      },
-      {
-        "command": "lollms.showSetupWizard",
-        "title": "LOLLMS: Show Setup Wizard / Reconfigure Server",
-        "category": "LOLLMS"
-      },
-      {
-        "command": "lollms.context.addCurrentFile",
-        "title": "LOLLMS: Add Current File to Context",
-        "category": "LOLLMS",
-        "icon": "$(add)"
-      },
-      {
-        "command": "lollms.context.addAllProjectFiles",
-        "title": "LOLLMS: Add All Project Files to Context (Respects Ignore)",
-        "category": "LOLLMS",
-        "icon": "$(folder-library)"
-      },
-      {
-        "command": "lollms.context.removeFile",
-        "title": "LOLLMS: Remove File from Context",
-        "category": "LOLLMS",
-        "icon": "$(remove)"
-      },
-      {
-        "command": "lollms.context.clearAll",
-        "title": "LOLLMS: Clear All Context Files",
-        "category": "LOLLMS",
-        "icon": "$(clear-all)"
-      },
-      {
-        "command": "lollms.context.refreshView",
-        "title": "LOLLMS: Refresh Context View",
-        "category": "LOLLMS",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "lollms.context.viewAndCopy",
-        "title": "LOLLMS: View/Copy Full Context Prompt",
-        "category": "LOLLMS",
-        "icon": "$(clippy)"
-      }
+      { "command": "lollms.generateCodeFromComment", "title": "LOLLMS: Generate Code from Preceding Comment/Docstring", "category": "LOLLMS" },
+      { "command": "lollms.generateWithContext", "title": "LOLLMS: Generate/Modify Code using Context Files", "category": "LOLLMS" },
+      { "command": "lollms.generateCommitMessage", "title": "LOLLMS: Generate Commit Message", "category": "LOLLMS", "icon": "$(zap)" },
+      { "command": "lollms.assets.createImageAsset", "title": "LOLLMS: Create Image Asset (PNG)", "category": "LOLLMS Assets" },
+      { "command": "lollms.assets.createSvgAsset", "title": "LOLLMS: Create SVG Asset (Text-based)", "category": "LOLLMS Assets" },
+      { "command": "lollms.showSetupWizard", "title": "LOLLMS: Show Setup Wizard / Reconfigure Server", "category": "LOLLMS" },
+      { "command": "lollms.openConfigurationUI", "title": "LOLLMS: Open Configuration Panel", "category": "LOLLMS" },
+      { "command": "lollms.context.addCurrentFile", "title": "LOLLMS Context: Add Current File", "category": "LOLLMS Context", "icon": "$(add)" },
+      { "command": "lollms.context.addAllProjectFiles", "title": "LOLLMS Context: Add All Project Files (Respects Ignore)", "category": "LOLLMS Context", "icon": "$(folder-library)" },
+      { "command": "lollms.context.removeFile", "title": "LOLLMS Context: Remove File", "category": "LOLLMS Context", "icon": "$(remove)" },
+      { "command": "lollms.context.clearAll", "title": "LOLLMS Context: Clear All Files", "category": "LOLLMS Context", "icon": "$(clear-all)" },
+      { "command": "lollms.context.refreshView", "title": "LOLLMS Context: Refresh View", "category": "LOLLMS Context", "icon": "$(refresh)" },
+      { "command": "lollms.context.viewAndCopy", "title": "LOLLMS Context: View/Copy Full Prompt", "category": "LOLLMS Context", "icon": "$(clippy)" },
+      { "command": "lollms.openChatView", "title": "LOLLMS Chat: Open Chat Panel", "category": "LOLLMS Chat" },
+      { "command": "lollms.chat.newDiscussion", "title": "LOLLMS Chat: Start New Discussion", "category": "LOLLMS Chat", "icon": "$(add)" }
     ],
     "menus": {
       "editor/context": [
-        {
-          "command": "lollms.generateCodeFromComment",
-          "when": "editorHasSelection || !editorHasSelection",
-          "group": "lollms@1"
-        },
-        {
-          "command": "lollms.generateWithContext",
-          "when": "editorHasSelection || !editorHasSelection",
-          "group": "lollms@2"
-        },
-        {
-          "command": "lollms.context.addCurrentFile",
-          "when": "resourceScheme == file",
-          "group": "lollms@3"
-        }
+        { "command": "lollms.generateCodeFromComment", "when": "editorHasSelection || !editorHasSelection", "group": "lollms@1" },
+        { "command": "lollms.generateWithContext", "when": "editorHasSelection || !editorHasSelection", "group": "lollms@2" },
+        { "command": "lollms.context.addCurrentFile", "when": "resourceScheme == file", "group": "lollms@3" }
       ],
       "explorer/context": [
-        {
-          "command": "lollms.context.addCurrentFile",
-          "when": "resourceScheme == file",
-          "group": "lollms@1"
-        }
+        { "command": "lollms.context.addCurrentFile", "when": "resourceScheme == file", "group": "lollms@1" }
       ],
       "view/title": [
-        {
-          "command": "lollms.context.addCurrentFile",
-          "when": "view == lollmsContextView",
-          "group": "navigation@1",
-          "icon": "$(add)",
-          "title": "Add Active File"
-        },
-        {
-          "command": "lollms.context.addAllProjectFiles",
-          "when": "view == lollmsContextView",
-          "group": "navigation@2",
-          "icon": "$(folder-library)",
-          "title": "Add All Project Files"
-        },
-        {
-          "command": "lollms.context.clearAll",
-          "when": "view == lollmsContextView",
-          "group": "navigation@3",
-          "icon": "$(clear-all)",
-          "title": "Clear Context"
-        },
-        {
-          "command": "lollms.context.refreshView",
-          "when": "view == lollmsContextView",
-          "group": "navigation@4",
-          "icon": "$(refresh)",
-          "title": "Refresh View"
-        },
-        {
-          "command": "lollms.context.viewAndCopy",
-          "when": "view == lollmsContextView",
-          "group": "navigation@5",
-          "icon": "$(clippy)",
-          "title": "View/Copy Prompt"
-        }
+        { "command": "lollms.context.addCurrentFile", "when": "view == lollmsContextView", "group": "navigation@1", "icon": "$(add)", "title": "Add Active File" },
+        { "command": "lollms.context.addAllProjectFiles", "when": "view == lollmsContextView", "group": "navigation@2", "icon": "$(folder-library)", "title": "Add All Project Files" },
+        { "command": "lollms.context.clearAll", "when": "view == lollmsContextView", "group": "navigation@3", "icon": "$(clear-all)", "title": "Clear Context" },
+        { "command": "lollms.context.refreshView", "when": "view == lollmsContextView", "group": "navigation@4", "icon": "$(refresh)", "title": "Refresh View" },
+        { "command": "lollms.context.viewAndCopy", "when": "view == lollmsContextView", "group": "navigation@5", "icon": "$(clippy)", "title": "View/Copy Prompt" },
+        { "command": "lollms.chat.newDiscussion", "when": "view == lollmsChatView", "group": "navigation@1", "icon": "$(add)", "title": "New Discussion" }
       ],
       "view/item/context": [
-        {
-          "command": "lollms.context.removeFile",
-          "when": "view == lollmsContextView && viewItem == lollmsContextFile",
-          "group": "inline"
-        }
+        { "command": "lollms.context.removeFile", "when": "view == lollmsContextView && viewItem == lollmsContextFile", "group": "inline" }
       ],
       "commandPalette": [
+        { "command": "lollms.openChatView", "when": "true" },
+        { "command": "lollms.chat.newDiscussion", "when": "true" },
         { "command": "lollms.generateCodeFromComment", "when": "editorTextFocus" },
         { "command": "lollms.generateWithContext", "when": "true" },
         { "command": "lollms.generateCommitMessage", "when": "scmProvider == git" },
         { "command": "lollms.showSetupWizard", "when": "true" },
+        { "command": "lollms.openConfigurationUI", "when": "true" },
         { "command": "lollms.context.addCurrentFile", "when": "editorTextFocus || explorerResourceIsFolder == false && resourceScheme == file" },
         { "command": "lollms.context.addAllProjectFiles", "when": "true" },
         { "command": "lollms.context.clearAll", "when": "true" },
         { "command": "lollms.context.refreshView", "when": "true" },
-        { "command": "lollms.context.viewAndCopy", "when": "true" }
+        { "command": "lollms.context.viewAndCopy", "when": "true" },
+        { "command": "lollms.assets.createImageAsset", "when": "true" },
+        { "command": "lollms.assets.createSvgAsset", "when": "true" }
       ],
       "scm/title": [
         { "command": "lollms.generateCommitMessage", "when": "scmProvider == git", "group": "navigation@1" }
@@ -187,83 +106,23 @@
     "configuration": {
       "title": "LOLLMS Copilot",
       "properties": {
-        "lollms.serverUrl": {
-          "type": "string",
-          "default": "http://localhost:9601",
-          "description": "Base URL of the running lollms-server (e.g., http://localhost:9601)."
-        },
-        "lollms.apiKey": {
-          "type": "string",
-          "default": "",
-          "description": "API Key for the lollms-server (if required)."
-        },
-         "lollms.defaultBindingInstance": {
-          "type": "string",
-          "default": "",
-          "description": "(Required for context size checks) The name of the binding instance (defined in lollms-server's main config and bindings folder) to use for context size checks and potentially default generation if not overridden."
-        },
-        "lollms.codeGenPromptPrefix": {
-          "type": "string",
-          "default": "Implement the following functionality described in the comment/docstring:\n\n",
-          "description": "Text prepended to the comment/docstring before sending for code generation. Used as part of the 'user_prompt' in the API request."
-        },
-        "lollms.codeGenPromptSuffix": {
-          "type": "string",
-          "default": "\n\n```python\n",
-          "description": "Text appended after the comment/docstring for code generation (e.g., hint the language). Used as part of the 'user_prompt' in the API request."
-        },
-         "lollms.contextPromptPrefix": {
-          "type": "string",
-          "default": "Based on the provided file context and the user's request, generate or modify the code as described.\n\n--- CONTEXT FILES ---\n",
-          "description": "Text prepended before formatted file context is included in the prompt sent to the server's /generate endpoint."
-        },
-        "lollms.contextPromptSuffix": {
-          "type": "string",
-          "default": "\n--- END CONTEXT FILES ---\n\nUser Request:\n",
-          "description": "Text appended after formatted file context but before the user's specific generation/modification request in the prompt sent to the server."
-        },
-        "lollms.commitMsgPromptPrefix": {
-          "type": "string",
-          "default": "Generate a concise Git commit message in the conventional commit format (e.g., feat: ...) that summarizes the following staged changes:\n\n```diff\n",
-          "description": "Text prepended to the git diff for commit message generation. Sent as part of the 'user_prompt' to the /generate endpoint."
-        },
-        "lollms.commitMsgPromptSuffix": {
-          "type": "string",
-          "default": "\n```\n\nCommit Message:",
-          "description": "Text appended after the git diff for commit message generation. Sent as part of the 'user_prompt' to the /generate endpoint."
-        },
-        "lollms.defaultModelParameters": {
-           "type": "object",
-           "default": {
-              "temperature": 0.3,
-              "max_tokens": 2048
-            },
-           "description": "Default generation parameters for LOLLMS API requests (passed in the 'parameters' field of the /generate payload). Can be overridden by personality settings on the server."
-        },
-        "lollms.contextCharWarningThreshold": {
-            "type": "integer",
-            "default": 100000,
-            "description": "Warn the user if the estimated character count for the context generation prompt (files + instructions) exceeds this value. This is an estimate before tokenization."
-        },
-        "lollms.includeFilePathsInContext": {
-            "type": "boolean",
-            "default": true,
-            "description": "Include the relative file path as a header before each file's content in the context prompt sent to the LLM."
-        },
-        "lollms.contextIgnorePatterns": {
-            "type": "array",
-            "default": [
-                "**/node_modules/**", "**/.git/**", "**/.vscode/**", "**/.svn/**", "**/.hg/**",
-                "**/CVS/**", "**/.DS_Store/**", "**/Thumbs.db/**", "**/*.lock", "**/*.log",
-                "**/*.exe", "**/*.dll", "**/*.so", "**/*.dylib", "**/*.obj", "**/*.o", "**/*.a",
-                "**/*.lib", "**/*.pyc", "**/*.pyo", "**/*.class", "**/*.jar", "**/*.bin",
-                "**/*.pdf", "**/*.png", "**/*.jpg", "**/*.jpeg", "**/*.gif", "**/*.bmp", "**/*.tiff", "**/*.webp",
-                "**/*.mp3", "**/*.wav", "**/*.ogg", "**/*.mp4", "**/*.avi", "**/*.mov", "**/*.wmv",
-                "**/dist/**", "**/build/**", "**/out/**", "**/*.zip", "**/*.tar.gz", "**/*.rar"
-            ],
-            "description": "Glob patterns for files and folders to exclude when using 'Add All Project Files to Context'. Uses VS Code's workspace.findFiles exclusion format.",
-            "items": { "type": "string" }
-        }
+        "lollms.serverUrl": { "type": "string", "default": "http://localhost:9601", "description": "(Required) Base URL of the running lollms-server (e.g., http://localhost:9601)." },
+        "lollms.apiKey": { "type": "string", "default": "", "description": "API Key for the lollms-server (if required by server configuration)." },
+        "lollms.overrideBindingInstance": { "type": "string", "default": "", "description": "(Optional) Specify a server binding instance (e.g., 'my_ollama_gpu') to override the server's default for requests (Code Gen, Context Gen, Chat). Leave blank to use server defaults." },
+        "lollms.overrideModelName": { "type": "string", "default": "", "description": "(Optional) Specify a model name (e.g., 'llama3:8b') to use with the selected binding (default or override). Applies to Code Gen, Context Gen, and Chat. Leave blank for binding's default." },
+        "lollms.codeGenPromptPrefix": { "type": "string", "default": "Implement the following functionality described in the comment/docstring:\n\n", "description": "Text prepended to the comment/docstring before sending for code generation." },
+        "lollms.codeGenPromptSuffix": { "type": "string", "default": "\n\n```python\n", "description": "Text appended after the comment/docstring for code generation (e.g., hint the language)." },
+        "lollms.contextPromptPrefix": { "type": "string", "default": "Based on the provided file context and the user's request/conversation history, respond appropriately. CONTEXT:\n", "description": "System prompt / text prepended before formatted file context is included in the prompt for Context Generation and Chat." },
+        "lollms.contextPromptSuffix": { "type": "string", "default": "\nEND CONTEXT.\n\nCONVERSATION HISTORY (if any):\n", "description": "Text appended after formatted file context but before conversation history/user request for Context Generation and Chat." },
+        "lollms.commitMsgPromptPrefix": { "type": "string", "default": "Generate a concise Git commit message in the conventional commit format (e.g., feat: ...) that summarizes the following staged changes:\n\n```diff\n", "description": "Text prepended to the git diff for commit message generation." },
+        "lollms.commitMsgPromptSuffix": { "type": "string", "default": "\n```\n\nCommit Message:", "description": "Text appended after the git diff for commit message generation." },
+        "lollms.svgAssetPromptPrefix": { "type": "string", "default": "Generate SVG code based on the following description. Only output the raw SVG code within ```svg ... ``` tags:\n\nDescription: ", "description": "Prompt prefix for SVG asset generation." },
+        "lollms.svgAssetPromptSuffix": { "type": "string", "default": "\n\nSVG Code:\n", "description": "Prompt suffix for SVG asset generation." },
+        "lollms.defaultModelParameters": { "type": "object", "default": { "temperature": 0.3, "max_tokens": 4096 }, "description": "Default generation parameters for API requests (passed in 'parameters' field). Can be overridden by personality settings on server." },
+        "lollms.contextCharWarningThreshold": { "type": "integer", "default": 100000, "description": "Warn if estimated prompt character count (files + history + instructions) exceeds this. The extension will also check against the actual model token limit if available." },
+        "lollms.includeFilePathsInContext": { "type": "boolean", "default": true, "description": "Include the relative file path as a header before each file's content in the context prompt." },
+        "lollms.contextIgnorePatterns": { "type": "array", "default": [ "**/node_modules/**", "**/.git/**", "**/.vscode/**", "**/.svn/**", "**/.hg/**", "**/CVS/**", "**/.DS_Store/**", "**/Thumbs.db/**", "**/*.lock", "**/*.log", "**/*.exe", "**/*.dll", "**/*.so", "**/*.dylib", "**/*.obj", "**/*.o", "**/*.a", "**/*.lib", "**/*.pyc", "**/*.pyo", "**/*.class", "**/*.jar", "**/*.bin", "**/*.pdf", "**/*.png", "**/*.jpg", "**/*.jpeg", "**/*.gif", "**/*.bmp", "**/*.tiff", "**/*.webp", "**/*.mp3", "**/*.wav", "**/*.ogg", "**/*.mp4", "**/*.avi", "**/*.mov", "**/*.wmv", "**/dist/**", "**/build/**", "**/out/**", "**/*.zip", "**/*.tar.gz", "**/*.rar" ], "description": "Glob patterns for files and folders to exclude when using 'Add All Project Files to Context'.", "items": { "type": "string" } },
+        "lollms.chatSaveFolder": { "type": "string", "default": ".lollms/chats", "description": "Relative path within the workspace root where chat discussion JSON files will be saved. Folder will be created if it doesn't exist." }
       }
     }
   },
@@ -272,7 +131,7 @@
     "compile": "npm run esbuild-base -- --sourcemap",
     "watch": "npm run esbuild-base -- --sourcemap --watch",
     "package": "npm run esbuild-base -- --minify",
-    "esbuild-base": "npx esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "esbuild-base": "node esbuild.js",
     "lint": "eslint src --ext ts",
     "test": "vscode-test"
   },
