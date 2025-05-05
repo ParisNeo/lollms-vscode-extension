@@ -2,30 +2,30 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
-import fetch from 'node-fetch'; // Explicitly import fetch if needed outside client
+import fetch from 'node-fetch';
 
 import * as config from './config';
 import * as gitUtils from './gitUtils';
 import * as editorUtils from './editorUtils';
 import { ContextManager, FALLBACK_CONTEXT_SIZE_TOKENS } from './contextManager';
 import { ContextTreeDataProvider, ContextItem } from './contextTreeViewProvider';
-import { LollmsClient, LollmsGeneratePayload, LollmsInputDataItem, LollmsAvailableModel } from './lollmsClient'; // Import necessary types
+import { ChatViewProvider } from './chatViewProvider';
+import { LollmsClient, LollmsGeneratePayload, LollmsInputDataItem, LollmsAvailableModel } from './lollmsClient';
 
-// --- Global Variables ---
 let lollmsClient: LollmsClient | null = null;
 let contextManagerInstance: ContextManager | null = null;
 let contextTreeViewProvider: ContextTreeDataProvider | null = null;
+let chatViewProviderInstance: ChatViewProvider | null = null;
 let lollmsStatusBarItem: vscode.StatusBarItem;
-let configWebviewPanel: vscode.WebviewPanel | undefined = undefined; // Track the single config panel
+let configWebviewPanel: vscode.WebviewPanel | undefined = undefined;
 
-// --- ensureClient Function ---
 function ensureClient(): LollmsClient | null {
     if (!config.isConfigValid()) {
         config.showConfigurationError();
         if (lollmsClient) {
-            console.log("Configuration became invalid, clearing existing LOLLMS client.");
             lollmsClient = null;
-            if (contextManagerInstance) contextManagerInstance.setClient(null);
+            contextManagerInstance?.setClient(null);
+            chatViewProviderInstance?.updateClient(null);
         }
         return null;
     }
@@ -34,52 +34,47 @@ function ensureClient(): LollmsClient | null {
 
     if (!lollmsClient || lollmsClient['baseUrl'] !== serverUrl || lollmsClient['apiKey'] !== apiKey) {
         try {
-            console.log(`Initializing/Updating LOLLMS Client. URL: ${serverUrl}, API Key Set: ${!!apiKey}`);
             lollmsClient = new LollmsClient(serverUrl, apiKey);
-            if (contextManagerInstance) {
-                contextManagerInstance.setClient(lollmsClient);
-                // Invalidate context size cache when client changes
+            contextManagerInstance?.setClient(lollmsClient);
+             if (contextManagerInstance) {
                 contextManagerInstance['_cachedContextSizeLimit'] = null;
-            }
+             }
+             chatViewProviderInstance?.updateClient(lollmsClient);
         } catch (error: any) {
             console.error("Failed to initialize LOLLMS Client:", error);
             vscode.window.showErrorMessage(`Failed to initialize LOLLMS Client: ${error.message}`);
             lollmsClient = null;
-            if (contextManagerInstance) contextManagerInstance.setClient(null);
+            contextManagerInstance?.setClient(null);
+            chatViewProviderInstance?.updateClient(null);
             return null;
         }
     }
     return lollmsClient;
 }
 
-// --- Activate Function ---
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-    console.log('LOLLMS Copilot extension is activating...');
-
-    // --- Initialize Core Components ---
     contextManagerInstance = new ContextManager(context);
-    ensureClient(); // Initialize client early
-    contextManagerInstance.setClient(lollmsClient); // Pass client ref
+    chatViewProviderInstance = new ChatViewProvider(context.extensionUri, context, contextManagerInstance);
+    ensureClient();
     contextTreeViewProvider = new ContextTreeDataProvider(contextManagerInstance, context);
 
-    // --- Register Tree View ---
     const contextTreeViewRegistration = vscode.window.registerTreeDataProvider('lollmsContextView', contextTreeViewProvider);
     context.subscriptions.push(contextTreeViewRegistration);
 
-    // --- Create Status Bar Item ---
+    const chatViewRegistration = vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, chatViewProviderInstance, {
+         webviewOptions: { retainContextWhenHidden: true }
+    });
+    context.subscriptions.push(chatViewRegistration);
+
     lollmsStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     lollmsStatusBarItem.command = 'lollms.openConfigurationUI';
     lollmsStatusBarItem.text = `$(lightbulb-sparkle) LOLLMS`;
-    lollmsStatusBarItem.tooltip = 'Open LOLLMS Copilot Configuration';
+    lollmsStatusBarItem.tooltip = 'Open LOLLMS Copilot Configuration / Chat';
     lollmsStatusBarItem.show();
     context.subscriptions.push(lollmsStatusBarItem);
 
-    // --- Check/Run Wizard (can run after status bar is shown) ---
     checkAndRunWizard(context).catch(err => console.error("Error during initial check/wizard launch:", err));
 
-    // --- Register Commands ---
-
-    // 1. Generate Commit Message
     const generateCommitDisposable = vscode.commands.registerCommand('lollms.generateCommitMessage', async () => {
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.SourceControl,
@@ -110,6 +105,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 input_data: [{ type: "text", role: "user_prompt", data: promptText }],
                 generation_type: "ttt"
             };
+             if (overrideBinding) payload.binding_name = overrideBinding;
+             if (overrideModel) payload.model_name = overrideModel;
+             payload.parameters = parameters;
 
             const commitMessage = await client.generate(payload, parameters, overrideBinding, overrideModel);
 
@@ -119,11 +117,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 vscode.window.setStatusBarMessage('LOLLMS commit message generated!', 3000);
             } else {
                 console.error("Failed to get commit message from LOLLMS client.");
+                 vscode.window.showErrorMessage("Failed to get commit message from LOLLMS.");
             }
         });
     });
 
-    // 2. Generate Code from Comment
     const generateCodeDisposable = vscode.commands.registerCommand('lollms.generateCodeFromComment', async () => {
         const editor = vscode.window.activeTextEditor;
         if (!editor) { vscode.window.showInformationMessage('No active editor.'); return; }
@@ -156,12 +154,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                  input_data: [{ type: "text", role: "user_prompt", data: promptText }],
                  generation_type: "ttt"
              };
+             if (overrideBinding) payload.binding_name = overrideBinding;
+             if (overrideModel) payload.model_name = overrideModel;
+             payload.parameters = parameters;
+
 
             if (token.isCancellationRequested) { console.log("Cancelled before API call."); return; }
             progress.report({ increment: 30, message: "Requesting generation..." });
             const fullGeneratedResponse = await client.generate(payload, parameters, overrideBinding, overrideModel);
 
-            if (token.isCancellationRequested) { console.log("Cancelled during/after API call."); vscode.window.setStatusBarMessage('LOLLMS generation cancelled.', 3000); return; }
+            if (token.isCancellationRequested) { vscode.window.setStatusBarMessage('LOLLMS generation cancelled.', 3000); return; }
 
             if (fullGeneratedResponse !== null) {
                 progress.report({ increment: 50, message: "Processing result..." });
@@ -178,15 +180,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 } else {
                      console.error("Extracted code block was empty.");
                      vscode.window.showWarningMessage(`LOLLMS response processed, but resulted in empty code.`);
-                     console.warn("Full LLM response (empty result):\n", fullGeneratedResponse);
                 }
             } else {
-                console.error("Failed to get generated code from LOLLMS client.");
+                 vscode.window.showErrorMessage(`Failed to get response from LOLLMS.`);
+                 console.error("Failed to get generated code from LOLLMS client.");
             }
         });
     });
 
-    // 3. Generate with Context
     const generateWithContextDisposable = vscode.commands.registerCommand('lollms.generateWithContext', async () => {
         if (!contextManagerInstance) { vscode.window.showErrorMessage("Context Manager not initialized."); return; }
         const currentContextUris = contextManagerInstance.getContextUris();
@@ -198,7 +199,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             placeHolder: "e.g., Refactor the classes, Add documentation...",
             title: "LOLLMS Context Request", ignoreFocusOut: true
         });
-        if (!userInstruction) { console.log("User cancelled context instruction."); return; }
+        if (!userInstruction) { return; }
 
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
@@ -210,8 +211,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
             progress.report({ increment: 10, message: `Building context...` });
             const { context: formattedFileContext, fileCount, charCount, skippedFiles, estimatedTokens } = await contextManagerInstance.buildContextStringFromManagedFiles();
-            if (skippedFiles.length > 0) { vscode.window.showWarningMessage(`Skipped ${skippedFiles.length} context file(s). Check Output.`); console.warn("Context Manager skipped files:", skippedFiles); }
-            if (token.isCancellationRequested) { console.log("Context building cancelled."); return; }
+            if (skippedFiles.length > 0) { vscode.window.showWarningMessage(`Skipped ${skippedFiles.length} context file(s). Check Output.`); }
+            if (token.isCancellationRequested) { return; }
 
             const fullPromptText = `${config.getContextPromptPrefix()}${formattedFileContext}${config.getContextPromptSuffix()}${userInstruction}`;
             progress.report({ increment: 5, message: "Checking size..." });
@@ -220,7 +221,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             if (!await confirmLargeContext(totalChars, contextManagerInstance)) {
                 vscode.window.showInformationMessage("Context generation cancelled by user due to size."); return;
             }
-            if (token.isCancellationRequested) { console.log("Context size confirmation cancelled."); return; }
+            if (token.isCancellationRequested) { return; }
 
             const overrideBinding = config.getOverrideBindingInstance();
             const overrideModel = config.getOverrideModelName();
@@ -230,18 +231,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                  input_data: [{ type: "text", role: "user_prompt", data: fullPromptText }],
                  generation_type: "ttt"
              };
+             if (overrideBinding) payload.binding_name = overrideBinding;
+             if (overrideModel) payload.model_name = overrideModel;
+             payload.parameters = parameters;
 
             progress.report({ increment: 25, message: "Requesting generation..." });
             const generatedResult = await client.generate(payload, parameters, overrideBinding, overrideModel);
 
-            if (token.isCancellationRequested) { console.log("Context generation cancelled."); vscode.window.setStatusBarMessage('LOLLMS generation cancelled.', 3000); return; }
+            if (token.isCancellationRequested) { vscode.window.setStatusBarMessage('LOLLMS generation cancelled.', 3000); return; }
 
             if (generatedResult !== null) {
                 progress.report({ increment: 60, message: "Displaying result..." });
                 try {
-                    let language = 'markdown'; // Default
+                    let language = 'markdown';
                     const trimmedResult = editorUtils.extractFirstCodeBlock(generatedResult);
-                    // Add more robust language detection if needed
                     if (trimmedResult.startsWith('def ') || trimmedResult.includes('import ')) language = 'python';
                     else if (trimmedResult.startsWith('function') || trimmedResult.includes('const ')) language = 'javascript';
                     else if (trimmedResult.startsWith('<')) language = 'html';
@@ -258,23 +261,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                     vscode.window.showInformationMessage("LOLLMS Result (Preview):\n" + generatedResult.substring(0, 500) + "...", { modal: true });
                 }
             } else {
-                console.error("Failed to get context generation result from LOLLMS client.");
+                 vscode.window.showErrorMessage("Failed to generate response from LOLLMS.");
+                 console.error("Failed to get context generation result from LOLLMS client.");
             }
         });
     });
 
-    // 4. Show Setup Wizard Manually
     const showWizardDisposable = vscode.commands.registerCommand('lollms.showSetupWizard', async () => {
-        console.log("Manually triggering LOLLMS Copilot setup wizard...");
         await showSetupWizard(context);
     });
 
-    // 5. Open Configuration UI
     const openConfigUIDisposable = vscode.commands.registerCommand('lollms.openConfigurationUI', () => {
-        createConfigurationPanel(context); // Call the dedicated function
+         createConfigurationPanel(context);
     });
 
-    // 6. Context Management Commands
     const addCurrentFileDisposable = vscode.commands.registerCommand('lollms.context.addCurrentFile', async (uri?: vscode.Uri) => {
         if (!contextManagerInstance) { vscode.window.showErrorMessage("Context Manager not initialized."); return; }
         let fileUriToAdd: vscode.Uri | undefined = uri;
@@ -309,7 +309,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 progress.report({ message: "Searching files...", increment: 10 });
                 const maxResults = 2000;
                 const allFiles = await vscode.workspace.findFiles('**/*', excludePatternString, maxResults, token);
-                if (token.isCancellationRequested) { console.log("File search cancelled."); return; }
+                if (token.isCancellationRequested) { return; }
                 if (allFiles.length === 0) { vscode.window.showInformationMessage("No project files found."); return; }
                 if (allFiles.length === maxResults) vscode.window.showWarningMessage(`Reached file limit (${maxResults}).`);
 
@@ -321,7 +321,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                     catch { /* ignore */ }
                 }
                 progress.report({ message: `Checking size estimate...`, increment: 10 });
-                // Pass manager instance to confirmLargeContext
                 if (!await confirmLargeContext(estimatedChars, contextManagerInstance)) {
                     vscode.window.showInformationMessage("Operation cancelled by user."); return;
                 }
@@ -332,16 +331,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 for (const fileUri of allFiles) {
                      if (token.isCancellationRequested) break;
                      const uriString = fileUri.toString();
-                     // Use internal property access for bulk add efficiency
                      if (!contextManagerInstance['_contextUris'].has(uriString)) {
                           contextManagerInstance['_contextUris'].add(uriString);
                           addedCount++;
                      }
                 }
-                if (token.isCancellationRequested) { console.log("File adding cancelled."); return; }
+                if (token.isCancellationRequested) { return; }
                 if (addedCount > 0) {
-                    await contextManagerInstance['saveToState'](); // Use internal save
-                    contextManagerInstance['_onContextDidChange'].fire(); // Fire event
+                    await contextManagerInstance['saveToState']();
+                    contextManagerInstance['_onContextDidChange'].fire();
                     vscode.window.setStatusBarMessage(`Added ${addedCount} project files to LOLLMS Context.`, 4000);
                 } else vscode.window.showInformationMessage("No new project files were added.");
                 progress.report({ increment: 20 });
@@ -357,11 +355,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         let uriToRemove: vscode.Uri | undefined;
         if (itemOrUri instanceof ContextItem) uriToRemove = itemOrUri.resourceUri;
         else if (itemOrUri instanceof vscode.Uri && itemOrUri.scheme === 'file') uriToRemove = itemOrUri;
-        else { console.warn("Remove command called without valid arg."); return; }
+        else { return; }
         if (uriToRemove) {
             const removed = await contextManagerInstance.removeUri(uriToRemove);
             if (removed) vscode.window.setStatusBarMessage(`Removed from LOLLMS Context: ${vscode.workspace.asRelativePath(uriToRemove)}`, 3000);
-            else console.warn(`Attempted to remove URI not found: ${uriToRemove.fsPath}`);
         }
     });
 
@@ -374,7 +371,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     const refreshDisposable = vscode.commands.registerCommand('lollms.context.refreshView', () => {
         if (contextTreeViewProvider) { contextTreeViewProvider.refresh(); vscode.window.setStatusBarMessage("Refreshed LOLLMS Context View.", 2000); }
-        else console.warn("Cannot refresh: Context Tree View Provider missing.");
     });
 
 	const viewCopyContextDisposable = vscode.commands.registerCommand('lollms.context.viewAndCopy', async () => {
@@ -390,7 +386,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             if (!contextManagerInstance) { throw new Error("Context Manager unavailable."); }
 			progress.report({ increment: 20, message: `Reading ${currentContextUris.length} file(s)...` });
 			const { context: formattedFileContext, fileCount, charCount, skippedFiles, estimatedTokens } = await contextManagerInstance.buildContextStringFromManagedFiles();
-			if (skippedFiles.length > 0) { vscode.window.showWarningMessage(`Skipped ${skippedFiles.length} context file(s). Check Output.`); console.warn("Skipped context files during view/copy:", skippedFiles); }
+			if (skippedFiles.length > 0) { vscode.window.showWarningMessage(`Skipped ${skippedFiles.length} context file(s). Check Output.`); }
 
 			progress.report({ increment: 70, message: "Formatting..." });
             const fullPromptHeader = `--- LOLLMS Context Prompt (${fileCount} file(s), ~${estimatedTokens} tokens / ${charCount} chars) ---\n\n`;
@@ -409,21 +405,33 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		});
 	});
 
-    // --- Subscription Activation ---
+    const openChatDisposable = vscode.commands.registerCommand('lollms.openChatView', () => {
+        vscode.commands.executeCommand('lollms-copilot-view-container.focus');
+    });
+
+    const newDiscussionDisposable = vscode.commands.registerCommand('lollms.chat.newDiscussion', async () => {
+        if (chatViewProviderInstance) {
+            await chatViewProviderInstance.startNewDiscussion();
+             vscode.commands.executeCommand('lollmsChatView.focus');
+        } else {
+            vscode.window.showErrorMessage("Chat view provider not available.");
+        }
+    });
+
     context.subscriptions.push(
         generateCommitDisposable, generateCodeDisposable, generateWithContextDisposable,
         showWizardDisposable, openConfigUIDisposable, addCurrentFileDisposable,
         addAllDisposable, removeFileDisposable, clearAllDisposable,
-        refreshDisposable, viewCopyContextDisposable
+        refreshDisposable, viewCopyContextDisposable,
+        openChatDisposable, newDiscussionDisposable
     );
 
-    console.log('LOLLMS Copilot extension activation sequence complete.');
-} // End activate
+    console.log('LOLLMS Copilot extension activation complete.');
+}
 
-
-// --- Helper Functions ---
-
-/** Creates or reveals the configuration webview panel */
+/**
+ * Creates or reveals the configuration webview panel
+ */
 function createConfigurationPanel(context: vscode.ExtensionContext) {
     const column = vscode.window.activeTextEditor?.viewColumn;
     const panelType = 'lollmsConfiguration';
@@ -431,60 +439,132 @@ function createConfigurationPanel(context: vscode.ExtensionContext) {
 
     if (configWebviewPanel) {
         configWebviewPanel.reveal(column);
-        sendSettingsToWebview();
-        configWebviewPanel.webview.postMessage({ command: 'requestBindingsList' });
+        // No need to send settings immediately, webview will request 'getViewState' or similar
+        // Maybe trigger a bindings refresh explicitly if revealing an old panel?
+         configWebviewPanel.webview.postMessage({ command: 'requestBindingsList' });
         return;
     }
 
-    // Define the path to the media directory
     const mediaFolder = vscode.Uri.joinPath(context.extensionUri, 'media');
+    const scriptUri = vscode.Uri.joinPath(mediaFolder, 'configView.js');
+    const codiconsUri = vscode.Uri.joinPath(context.extensionUri, 'node_modules', '@vscode/codicons', 'dist', 'codicon.css'); // Get codicons URI
 
     configWebviewPanel = vscode.window.createWebviewPanel(
         panelType, panelTitle, column || vscode.ViewColumn.One,
         {
             enableScripts: true,
-            // IMPORTANT: Allow loading resources from the 'media' directory
-            localResourceRoots: [mediaFolder]
+            // Update localResourceRoots to include node_modules for codicons
+            localResourceRoots: [mediaFolder, vscode.Uri.joinPath(context.extensionUri, 'node_modules')]
         }
     );
 
-    // Get the correct URI for the script file
-    const scriptUri = configWebviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(mediaFolder, 'configView.js'));
+    const webviewScriptUri = configWebviewPanel.webview.asWebviewUri(scriptUri);
+    const webviewCodiconsUri = configWebviewPanel.webview.asWebviewUri(codiconsUri); // Make codicons URI accessible
 
-    // Set the HTML content, linking the external script
-    configWebviewPanel.webview.html = getConfigurationWebviewContent(configWebviewPanel.webview, scriptUri); // Pass script URI
+    configWebviewPanel.webview.html = getConfigurationWebviewContent(configWebviewPanel.webview, webviewScriptUri, webviewCodiconsUri); // Pass URIs
 
-    // --- Message Handler (remains the same as previous correct version) ---
+    // **UPDATED** Message Handler
     configWebviewPanel.webview.onDidReceiveMessage(
         async message => {
-             const client = ensureClient();
+            // Ensure client for most operations, but not for getCurrentSettings
+            let client = null;
+             if (message.command !== 'getCurrentSettings') {
+                client = ensureClient(); // Initialize/get client
+             }
+
             switch (message.command) {
-                case 'saveSettings': /* ... existing save logic ... */ break;
-                case 'getCurrentSettings': /* ... existing logic ... */ break;
-                case 'getBindingsList': /* ... existing logic ... */ break;
-                case 'getModelsList': /* ... existing logic ... */ break;
+                case 'saveSettings':
+                    if (message.payload) {
+                        try {
+                            await config.updateGlobalSettings(message.payload);
+                            ensureClient(); // Re-initialize client with new settings if needed
+                            configWebviewPanel?.webview.postMessage({ command: 'settingsSaved' });
+                            // Trigger a rescan automatically after saving potentially changed URL/Key
+                            configWebviewPanel?.webview.postMessage({ command: 'requestBindingsList' });
+                        } catch (error: any) {
+                             configWebviewPanel?.webview.postMessage({ command: 'saveError', error: error.message });
+                        }
+                    }
+                    break;
+                case 'getCurrentSettings': // Send current settings when webview asks
+                    sendSettingsToWebview();
+                    break;
+                case 'getBindingsList': // Handle explicit request for bindings
+                     if (!client) {
+                         configWebviewPanel?.webview.postMessage({ command: 'showError', payload: 'LOLLMS client not available. Check server URL/API Key.' });
+                         configWebviewPanel?.webview.postMessage({ command: 'bindingsList', payload: [] }); // Send empty list
+                         break;
+                     }
+                     try {
+                         // Use listActiveBindings as it's more relevant for config
+                         const bindingsMap = await client.listActiveBindings();
+                         // Assuming listActiveBindings returns a map like {"instance_name": {"type": "...", ...}}
+                         const bindingNames = bindingsMap ? Object.keys(bindingsMap) : [];
+                         configWebviewPanel?.webview.postMessage({ command: 'bindingsList', payload: bindingNames });
+                     } catch (error: any) {
+                          console.error("Error fetching bindings:", error);
+                          configWebviewPanel?.webview.postMessage({ command: 'showError', payload: `Error fetching bindings: ${error.message}` });
+                          configWebviewPanel?.webview.postMessage({ command: 'bindingsList', payload: [] }); // Send empty list on error
+                     }
+                    break;
+                 case 'rescanServer': // **NEW** Handle rescan request
+                     console.log("ConfigView: Received rescanServer request.");
+                      if (!client) {
+                          configWebviewPanel?.webview.postMessage({ command: 'showError', payload: 'LOLLMS client not available. Check server URL/API Key.' });
+                          configWebviewPanel?.webview.postMessage({ command: 'scanError', payload: 'Client not available.' }); // Explicit scan error
+                          break;
+                      }
+                      try {
+                          // 1. Fetch active bindings again
+                          const bindingsMap = await client.listActiveBindings();
+                          const bindingNames = bindingsMap ? Object.keys(bindingsMap) : [];
+                          // 2. Send updated bindings list back to webview
+                          configWebviewPanel?.webview.postMessage({ command: 'bindingsList', payload: bindingNames });
+                          // 3. Send success signal
+                           configWebviewPanel?.webview.postMessage({ command: 'scanComplete' });
+                          // The webview's existing logic will handle fetching models for the selected binding
+                          vscode.window.setStatusBarMessage("LOLLMS server scan complete.", 3000);
+                      } catch (error: any) {
+                           console.error("Error during server rescan:", error);
+                           const errorMsg = `Server rescan failed: ${error.message}`;
+                           configWebviewPanel?.webview.postMessage({ command: 'showError', payload: errorMsg });
+                           configWebviewPanel?.webview.postMessage({ command: 'scanError', payload: errorMsg }); // Explicit scan error
+                      }
+                    break;
+                case 'getModelsList': // (Keep existing logic)
+                     if (!client) { /* ... handle error ... */ break; }
+                     if (message.payload?.bindingName) {
+                         try {
+                             const models = await client.listAvailableModels(message.payload.bindingName);
+                             const modelNames = models ? models.map(m => m.name) : [];
+                             configWebviewPanel?.webview.postMessage({ command: 'modelsList', /*...*/ });
+                         } catch (error: any) { /* ... handle error ... */ }
+                     }
+                    break;
             }
         }, undefined, context.subscriptions );
 
     configWebviewPanel.onDidDispose( () => { configWebviewPanel = undefined; }, null, context.subscriptions );
 
-    // Send initial settings and trigger binding fetch
+    // Request initial settings and bindings when panel is first created
     sendSettingsToWebview();
     configWebviewPanel.webview.postMessage({ command: 'requestBindingsList' });
 }
 
-// --- getConfigurationWebviewContent function (now much simpler) ---
-function getConfigurationWebviewContent(webview: vscode.Webview, scriptUri: vscode.Uri): string {
+/**
+ * Generates the HTML content for the configuration webview.
+ */
+/** Generates the HTML content for the configuration webview. */
+function getConfigurationWebviewContent(webview: vscode.Webview, scriptUri: vscode.Uri, codiconsUri: vscode.Uri): string {
     const nonce = getNonce();
-
-    // Basic HTML structure linking the external script
-    // Add Content-Security-Policy meta tag
+    // Add Codicons CSS link and the Rescan button HTML
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} https: data:; script-src 'nonce-${nonce}';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; img-src ${webview.cspSource} https: data:; script-src 'nonce-${nonce}';">
+    <link href="${codiconsUri}" rel="stylesheet" />
     <title>LOLLMS Configuration</title>
     <style>
         /* Keep the same CSS styles as before */
@@ -494,6 +574,7 @@ function getConfigurationWebviewContent(webview: vscode.Webview, scriptUri: vsco
         input:focus, select:focus { outline: 1px solid var(--vscode-focusBorder); }
         button { margin-top: 20px; padding: 10px 15px; border: none; border-radius: 3px; background-color: var(--vscode-button-background); color: var(--vscode-button-foreground); cursor: pointer; font-weight: bold; }
         button:hover { background-color: var(--vscode-button-hoverBackground); }
+        button:disabled { background-color: var(--vscode-button-secondaryBackground); opacity: 0.6; cursor: not-allowed; }
         .setting-group { margin-bottom: 25px; border-bottom: 1px solid var(--vscode-editorWidget-border, #444); padding-bottom: 15px; }
         h3 { margin-top: 0; color: var(--vscode-foreground); border-bottom: 1px solid var(--vscode-editorWidget-border, #444); padding-bottom: 5px; }
         .description { font-size: 0.9em; color: var(--vscode-descriptionForeground); margin-bottom: 10px; margin-top: 2px; }
@@ -505,6 +586,10 @@ function getConfigurationWebviewContent(webview: vscode.Webview, scriptUri: vsco
         .checkbox-container label { margin-top: 0; margin-left: 8px; margin-bottom: 0; font-weight: normal; }
         input[type="checkbox"] { width: auto; accent-color: var(--vscode-focusBorder); }
         select:disabled { background-color: var(--vscode-input-disabledBackground); opacity: 0.5; }
+        /* Style for secondary button */
+        .button-secondary { background-color: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); margin-left: 10px; }
+        .button-secondary:hover { background-color: var(--vscode-button-secondaryHoverBackground); }
+        .button-secondary .codicon { margin-right: 4px; } /* Space icon and text */
     </style>
 </head>
 <body>
@@ -512,7 +597,6 @@ function getConfigurationWebviewContent(webview: vscode.Webview, scriptUri: vsco
     <div id="loading-feedback" class="info" style="display: none;">Loading...</div>
     <div id="error-feedback" class="error" style="display: none;"></div>
 
-    <!-- Form elements remain the same -->
     <div class="setting-group">
         <h3>Server Connection</h3>
         <label for="serverUrl">Server URL:</label>
@@ -521,21 +605,29 @@ function getConfigurationWebviewContent(webview: vscode.Webview, scriptUri: vsco
         <label for="apiKey">API Key (Optional):</label>
         <input type="password" id="apiKey" name="apiKey" placeholder="Leave blank if not required">
          <div class="description">API Key if your server requires authentication.</div>
+         <!-- Add Rescan Button Here -->
+         <button id="rescanButton" class="button-secondary" title="Check connection and refresh available bindings/models from the server">
+            <span class="codicon codicon-refresh"></span> Rescan Server
+         </button>
     </div>
+
     <div class="setting-group">
         <h3>Generation Overrides (Optional)</h3>
-         <div class="description">Select specific bindings/models configured on your server to override the server's defaults.</div>
+         <div class="description">Select specific bindings/models configured on your server to override the server's defaults. Requires successful server connection.</div>
         <label for="overrideBindingInstance">Override Binding Instance:</label>
         <select id="overrideBindingInstance" name="overrideBindingInstance">
              <option value="">-- Use Server Default --</option>
+             <!-- Options populated by JS -->
         </select>
         <div class="description">Leave as default or select an active binding instance.</div>
         <label for="overrideModelName">Override Model Name:</label>
         <select id="overrideModelName" name="overrideModelName" disabled>
             <option value="">-- Use Binding Default --</option>
+             <!-- Options populated by JS -->
         </select>
         <div class="description">Select a model available to the chosen binding.</div>
     </div>
+
      <div class="setting-group">
         <h3>Context Behavior</h3>
          <label for="contextCharWarningThreshold">Context Warning Threshold (Characters):</label>
@@ -547,16 +639,17 @@ function getConfigurationWebviewContent(webview: vscode.Webview, scriptUri: vsco
         </div>
          <div class="description">Prepend each file's content with its relative path in the prompt.</div>
     </div>
+
     <button id="saveButton">Save Settings</button>
     <div id="save-feedback"></div>
 
-    <!-- Link the external script -->
     <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
 }
-
-/** Helper to send current settings to the webview */
+/**
+ * Sends current settings to the configuration webview.
+ */
 function sendSettingsToWebview() {
     if (configWebviewPanel) {
          configWebviewPanel.webview.postMessage({
@@ -573,7 +666,9 @@ function sendSettingsToWebview() {
     }
 }
 
-/** Generates a random nonce string */
+/**
+ * Generates a random nonce string.
+ */
 function getNonce(): string {
     let text = '';
     const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -583,18 +678,22 @@ function getNonce(): string {
     return text;
 }
 
-
-/** Confirms if the user wants to proceed with a large context */
-async function confirmLargeContext(charCount: number, manager: ContextManager): Promise<boolean> {
+/**
+ * Confirms if the user wants to proceed with a large context prompt.
+ * @param charCount Estimated character count of the prompt.
+ * @param manager The ContextManager instance to fetch the actual token limit.
+ * @returns True if the user confirms, false otherwise.
+ */
+async function confirmLargeContext(charCount: number, manager: ContextManager | null): Promise<boolean> {
     const warningThresholdChars = config.getContextCharWarningThreshold();
     if (charCount <= warningThresholdChars) return true;
 
     const estimatedTokens = Math.ceil(charCount / config.APPROX_CHARS_PER_TOKEN);
-    const actualTokenLimit = await manager.getContextSizeLimit();
+    const actualTokenLimit = manager ? await manager.getContextSizeLimit() : FALLBACK_CONTEXT_SIZE_TOKENS;
 
     let message = `The estimated prompt size (~${charCount} chars / ~${estimatedTokens} tokens) exceeds the warning threshold of ${warningThresholdChars} chars.`;
 
-    if (actualTokenLimit && actualTokenLimit !== FALLBACK_CONTEXT_SIZE_TOKENS) {
+    if (manager && actualTokenLimit && actualTokenLimit !== FALLBACK_CONTEXT_SIZE_TOKENS) {
         message += `\nThe current default model's context limit is ~${actualTokenLimit} tokens.`;
         if (estimatedTokens > actualTokenLimit) {
             message += `\n\n🚨 WARNING: Estimated size may exceed model limit! Generation could fail or be truncated.`;
@@ -602,7 +701,7 @@ async function confirmLargeContext(charCount: number, manager: ContextManager): 
              message += `\nIt might fit within the limit, but could be slow/costly.`
         }
     } else {
-         message += `\nCould not verify against the actual model limit.`;
+         message += `\nCould not verify against the actual model limit (using fallback: ${FALLBACK_CONTEXT_SIZE_TOKENS} or failed fetch).`;
     }
     message += `\n\nProceed anyway?`;
 
@@ -610,21 +709,23 @@ async function confirmLargeContext(charCount: number, manager: ContextManager): 
     return userChoice === 'Proceed';
 }
 
-/** Checks if setup is needed and runs the wizard */
+/**
+ * Checks if initial setup is needed and runs the wizard.
+ */
 async function checkAndRunWizard(context: vscode.ExtensionContext): Promise<void> {
     try {
         const firstRunComplete = await context.globalState.get<boolean>('lollmsCopilotFirstRunComplete');
         const currentConfigValid = config.isConfigValid();
         if (!firstRunComplete || !currentConfigValid) {
-            console.log(`LOLLMS setup check: Needs setup (First Run: ${!firstRunComplete}, Config Valid: ${currentConfigValid}). Triggering wizard...`);
             setImmediate(() => { showSetupWizard(context).catch(error => console.error("Error running auto wizard:", error)); });
-        } else { console.log("LOLLMS setup check: Wizard not needed automatically."); }
+        }
     } catch (error) { console.error("Error during wizard check:", error); }
 }
 
-/** Displays the setup wizard UI (URL and optional API Key) */
+/**
+ * Displays the setup wizard UI (URL and optional API Key).
+ */
 async function showSetupWizard(context: vscode.ExtensionContext): Promise<void> {
-    console.log("Starting LOLLMS Copilot setup wizard (URL & API Key)...");
     const configureButton = "Configure Server URL Now";
     const choice = await vscode.window.showInformationMessage(
         'Configure LOLLMS Copilot Server Connection',
@@ -651,22 +752,23 @@ async function showSetupWizard(context: vscode.ExtensionContext): Promise<void> 
 
         await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Connecting...`, cancellable: false }, async (progress) => {
             const controller = new AbortController();
+            const signal = controller.signal;
             const timeoutId = setTimeout(() => { controller.abort(); }, HEALTH_CHECK_TIMEOUT_MS);
             try {
                 progress.report({ message: `Checking ${healthUrl}...` });
-                const response = await fetch(healthUrl, { method: 'GET', signal: controller.signal });
-                clearTimeout(timeoutId); // Clear timeout on successful fetch
+                // Use signal directly with node-fetch v2+
+                const response = await fetch(healthUrl, { method: 'GET', signal: signal as any}); // Cast signal for v2 compatibility if needed
+                clearTimeout(timeoutId);
                 if (!response.ok) { const errText = await response.text(); throw new Error(`Status ${response.status}: ${errText}`); }
                 const healthData = await response.json() as { status: string; api_key_required?: boolean; version?: string };
                 if (healthData.status !== 'ok') { throw new Error(`Server status: ${healthData.status || 'Unknown'}`); }
                 healthCheckOk = true; apiKeyRequired = healthData.api_key_required === true; serverVersion = healthData.version || null;
                 vscode.window.showInformationMessage(`Connected to LOLLMS Server v${serverVersion || 'unknown'}! API Key Required: ${apiKeyRequired ? 'Yes' : 'No'}`);
             } catch (error: any) {
-                clearTimeout(timeoutId); // Clear timeout on error too
+                clearTimeout(timeoutId);
                 healthCheckOk = false;
                 let errorMsg = error.message || 'Unknown connection error';
                 if (error.name === 'AbortError') errorMsg = `Connection timed out (${HEALTH_CHECK_TIMEOUT_MS / 1000}s).`;
-                console.error(`Health check failed for ${currentUrl}:`, error);
                 const retryChoice = await vscode.window.showWarningMessage( `Failed connection to '${currentUrl}'. Check URL, server, CORS.\nError: ${errorMsg}`, { modal: true }, "Retry URL", "Cancel Setup" );
                 if (retryChoice !== "Retry URL") userCancelled = true;
             }
@@ -677,14 +779,12 @@ async function showSetupWizard(context: vscode.ExtensionContext): Promise<void> 
 
     if (healthCheckOk && currentUrl) {
         await vscode.workspace.getConfiguration('lollms').update('serverUrl', currentUrl, configTarget);
-        console.log(`Server URL saved: ${currentUrl}`);
         let apiKeyFlowCompleted = !apiKeyRequired;
         if (apiKeyRequired) {
             const apiKeyInput = await vscode.window.showInputBox({ prompt: `Enter API Key for ${currentUrl}`, password: true, ignoreFocusOut: true, value: config.getApiKey() || "" });
             if (apiKeyInput !== undefined) {
                 await vscode.workspace.getConfiguration('lollms').update('apiKey', apiKeyInput.trim(), configTarget);
                 apiKeyFlowCompleted = true;
-                 console.log(`API Key saved (length: ${apiKeyInput.trim().length})`);
             } else {
                 vscode.window.showWarningMessage("API Key prompt cancelled."); apiKeyFlowCompleted = false;
             }
@@ -692,9 +792,8 @@ async function showSetupWizard(context: vscode.ExtensionContext): Promise<void> 
         if (apiKeyFlowCompleted) {
             await context.globalState.update('lollmsCopilotFirstRunComplete', true);
             vscode.window.showInformationMessage("LOLLMS config updated!");
-            ensureClient(); // Re-initialize client with potentially new settings
+            ensureClient();
         } else {
-            console.log("Setup finished, but API key step skipped/cancelled.");
             vscode.window.showWarningMessage("Server URL saved, but API key setup skipped.");
         }
     } else if (!userCancelled) {
@@ -702,12 +801,14 @@ async function showSetupWizard(context: vscode.ExtensionContext): Promise<void> 
     }
 }
 
-/** Deactivation function */
+/**
+ * Deactivation function.
+ */
 export function deactivate(): void {
-    console.log('LOLLMS Copilot extension is deactivated.');
     lollmsStatusBarItem?.dispose();
     configWebviewPanel?.dispose();
     lollmsClient = null;
-    contextManagerInstance = null; // Allow garbage collection
+    contextManagerInstance = null;
     contextTreeViewProvider = null;
+    chatViewProviderInstance = null;
 }
