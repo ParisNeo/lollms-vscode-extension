@@ -218,8 +218,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             progress.report({ increment: 5, message: "Checking size..." });
             const totalChars = fullPromptText.length;
 
-            if (!await confirmLargeContext(totalChars, contextManagerInstance)) {
-                vscode.window.showInformationMessage("Context generation cancelled by user due to size."); return;
+            if (!await contextManagerInstance.checkAndConfirmContextSize(totalChars)) {
+                vscode.window.showInformationMessage("Context generation cancelled by user due to size.");
+                return;
             }
             if (token.isCancellationRequested) { return; }
 
@@ -321,9 +322,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                     catch { /* ignore */ }
                 }
                 progress.report({ message: `Checking size estimate...`, increment: 10 });
-                if (!await confirmLargeContext(estimatedChars, contextManagerInstance)) {
-                    vscode.window.showInformationMessage("Operation cancelled by user."); return;
-                }
+				if (!await contextManagerInstance.checkAndConfirmContextSize(estimatedChars)) {
+					vscode.window.showInformationMessage("Operation cancelled by user due to size estimate.");
+					return;
+				}
                 if (token.isCancellationRequested) return;
 
                 progress.report({ message: `Adding ${allFiles.length} files...`, increment: 40 });
