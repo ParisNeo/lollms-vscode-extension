@@ -141,16 +141,25 @@ export class LollmsClient {
             const result = await response.json();
             console.debug("LOLLMS listActiveBindings Response:", result);
 
-            // Expecting a simple list of strings based on typical API design
-            if (Array.isArray(result) && result.every(item => typeof item === 'string')) {
-                return result as string[];
-            } else if (result && result.error) {
+            // First, check for a server-side error in the response body
+            if (result && result.error) {
                 console.error(`LOLLMS server returned error for list_active_bindings: ${result.error}`);
                 vscode.window.showErrorMessage(`Server error fetching bindings: ${result.error}`);
                 return null;
             }
+
+            // Now, check for the expected structure: { bindings: { ... } }
+            // Ensure 'bindings' exists and is an object (and not null, though typeof object covers null)
+            if (result && typeof result.bindings === 'object' && result.bindings !== null) {
+                // Extract the keys (binding names) from the 'bindings' object
+                const bindingNames = Object.keys(result.bindings);
+                console.log("bindingNames:");
+                console.log(bindingNames);
+                return bindingNames; // This will be string[]
+            }
             else {
-                console.warn("Received invalid format for active bindings list:", result);
+                // If the structure is not as expected, log a warning and inform the user.
+                console.warn("Received invalid format for active bindings list. Expected { bindings: {...} } but got:", result);
                 vscode.window.showErrorMessage("Received unexpected data format for active bindings.");
                 return null;
             }

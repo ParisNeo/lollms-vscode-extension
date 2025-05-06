@@ -498,16 +498,16 @@ function createConfigurationPanel(context: vscode.ExtensionContext) {
                          break;
                      }
                      try {
-                         // Use listActiveBindings as it's more relevant for config
-                         const bindingsMap = await client.listActiveBindings();
-                         // Assuming listActiveBindings returns a map like {"instance_name": {"type": "...", ...}}
-                         const bindingNames = bindingsMap ? Object.keys(bindingsMap) : [];
-                         configWebviewPanel?.webview.postMessage({ command: 'bindingsList', payload: bindingNames });
-                     } catch (error: any) {
-                          console.error("Error fetching bindings:", error);
-                          configWebviewPanel?.webview.postMessage({ command: 'showError', payload: `Error fetching bindings: ${error.message}` });
-                          configWebviewPanel?.webview.postMessage({ command: 'bindingsList', payload: [] }); // Send empty list on error
-                     }
+						// listActiveBindings now returns string[] | null
+						const activeBindingNames = await client.listActiveBindings();
+						// If activeBindingNames is null (e.g., API error handled in client), default to empty array
+						const bindingNamesToSend = activeBindingNames ? activeBindingNames : [];
+						configWebviewPanel?.webview.postMessage({ command: 'bindingsList', payload: bindingNamesToSend });
+					} catch (error: any) {
+						 console.error("Error fetching bindings:", error);
+						 configWebviewPanel?.webview.postMessage({ command: 'showError', payload: `Error fetching bindings: ${error.message}` });
+						 configWebviewPanel?.webview.postMessage({ command: 'bindingsList', payload: [] }); // Send empty list on error
+					}
                     break;
                  case 'rescanServer': // **NEW** Handle rescan request
                      console.log("ConfigView: Received rescanServer request.");
@@ -518,10 +518,12 @@ function createConfigurationPanel(context: vscode.ExtensionContext) {
                       }
                       try {
                           // 1. Fetch active bindings again
-                          const bindingsMap = await client.listActiveBindings();
-                          const bindingNames = bindingsMap ? Object.keys(bindingsMap) : [];
+                          const activeBindingNames = await client.listActiveBindings(); // Returns string[] | null
+                          // If activeBindingNames is null, default to empty array
+                          const bindingNamesToSend = activeBindingNames ? activeBindingNames : [];
+
                           // 2. Send updated bindings list back to webview
-                          configWebviewPanel?.webview.postMessage({ command: 'bindingsList', payload: bindingNames });
+                          configWebviewPanel?.webview.postMessage({ command: 'bindingsList', payload: bindingNamesToSend });
                           // 3. Send success signal
                            configWebviewPanel?.webview.postMessage({ command: 'scanComplete' });
                           // The webview's existing logic will handle fetching models for the selected binding
