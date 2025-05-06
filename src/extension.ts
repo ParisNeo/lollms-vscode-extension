@@ -535,16 +535,43 @@ function createConfigurationPanel(context: vscode.ExtensionContext) {
                            configWebviewPanel?.webview.postMessage({ command: 'scanError', payload: errorMsg }); // Explicit scan error
                       }
                     break;
-                case 'getModelsList': // (Keep existing logic)
-                     if (!client) { /* ... handle error ... */ break; }
-                     if (message.payload?.bindingName) {
-                         try {
-                             const models = await client.listAvailableModels(message.payload.bindingName);
-                             const modelNames = models ? models.map(m => m.name) : [];
-                             configWebviewPanel?.webview.postMessage({ command: 'modelsList', /*...*/ });
-                         } catch (error: any) { /* ... handle error ... */ }
-                     }
-                    break;
+					case 'getModelsList':
+						if (!client) {
+							// It's good practice to inform the webview about the error
+							configWebviewPanel?.webview.postMessage({ command: 'showError', payload: 'LOLLMS client not available. Check server URL/API Key.' });
+							configWebviewPanel?.webview.postMessage({ command: 'modelsList', payload: [] }); // Send empty list
+							break;
+						}
+				   
+						const bindingNameForModels = message.payload?.bindingName; // Get bindingName from payload
+				   
+						if (bindingNameForModels) {
+							try {
+								// client.listAvailableModels returns Promise<LollmsAvailableModel[] | null>
+								const availableModels: LollmsAvailableModel[] | null = await client.listAvailableModels(bindingNameForModels);
+				   
+								// If availableModels is null (because client.listAvailableModels handled an error and returned null),
+								// modelNames will correctly become an empty array.
+								// Otherwise, it maps over the array of LollmsAvailableModel objects and extracts the 'name'.
+								const modelNames: string[] = availableModels ? availableModels.map(m => m.name) : [];
+				   
+								// Send the list of model names (or an empty list) to the webview
+								configWebviewPanel?.webview.postMessage({ command: 'modelsList', payload: modelNames });
+				   
+							} catch (error: any) {
+								// This catch is for unexpected errors in this specific block,
+								// though client.listAvailableModels should handle most API/network errors.
+								console.error(`Error in getModelsList for binding '${bindingNameForModels}':`, error);
+								configWebviewPanel?.webview.postMessage({ command: 'showError', payload: `Failed to retrieve models for '${bindingNameForModels}': ${error.message}` });
+								configWebviewPanel?.webview.postMessage({ command: 'modelsList', payload: [] }); // Send empty list on error
+							}
+						} else {
+							// Handle case where bindingName is not provided
+							console.warn("ConfigView: getModelsList called without a bindingName.");
+							configWebviewPanel?.webview.postMessage({ command: 'showError', payload: 'Binding name is required to fetch models.' });
+							configWebviewPanel?.webview.postMessage({ command: 'modelsList', payload: [] }); // Send empty list
+						}
+					   break;
             }
         }, undefined, context.subscriptions );
 

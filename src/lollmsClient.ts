@@ -170,15 +170,10 @@ export class LollmsClient {
         }
     }
 
-    /**
-     * Fetches the list of available models for a specific binding instance.
-     * Uses the /api/v1/list_available_models/{binding_instance_name} endpoint.
-     * @param bindingName The name of the binding instance.
-     * @returns A promise resolving to an array of available model details or null on failure.
-     */
     async listAvailableModels(bindingName: string): Promise<LollmsAvailableModel[] | null> {
         if (!bindingName) {
             console.error("LOLLMS listAvailableModels Error: bindingName parameter is required.");
+            vscode.window.showErrorMessage("Binding name is required to fetch models.");
             return null;
         }
         const safeBindingName = encodeURIComponent(bindingName);
@@ -186,7 +181,7 @@ export class LollmsClient {
         const headers = this.getHeaders();
         console.debug(`Requesting available models for binding '${bindingName}' from: ${apiUrl}`);
         try {
-            const response = await fetch(apiUrl, { method: 'GET', headers: headers, timeout: 15000 }); // Longer timeout possible
+            const response = await fetch(apiUrl, { method: 'GET', headers: headers, timeout: 15000 });
 
             if (!response.ok) {
                 const errorMsg = await this.formatApiError(response);
@@ -194,18 +189,41 @@ export class LollmsClient {
                 vscode.window.showErrorMessage(`Failed to fetch models for '${bindingName}': ${errorMsg}`);
                 return null;
             }
-            const result = await response.json();
+            const result = await response.json(); // result is like: { binding_instance_name: "...", models: [...] }
             console.debug(`LOLLMS listAvailableModels Response for '${bindingName}':`, result);
 
-            // Expecting an array of objects, each having at least a 'name' property
-            if (Array.isArray(result) && result.every(item => typeof item === 'object' && item !== null && 'name' in item)) {
-                return result as LollmsAvailableModel[];
-            } else if (result && result.error) {
+            // 1. Check for a server-side error explicitly returned in the JSON body
+            if (result && result.error) {
                 console.error(`LOLLMS server returned error for list_available_models on '${bindingName}': ${result.error}`);
                 vscode.window.showErrorMessage(`Server error fetching models for '${bindingName}': ${result.error}`);
                 return null;
+            }
+
+            // 2. The key containing the array of models is "models"
+            const modelsDataKey = "models";
+
+            // Check if the result is an object, not null, and has a 'models' property which is an array
+            if (result && typeof result === 'object' && result !== null && Array.isArray(result[modelsDataKey])) {
+                const modelsArray = result[modelsDataKey] as any[]; // Cast to any[] first for easier processing
+
+                // 3. Validate that each item in the 'modelsArray' conforms to LollmsAvailableModel structure
+                if (modelsArray.every(item =>
+                    typeof item === 'object' &&
+                    item !== null &&
+                    'name' in item &&       // Check if 'name' property exists
+                    typeof item.name === 'string' // Check if 'name' is a string
+                    // You could add more checks for other mandatory fields from LollmsAvailableModel if needed
+                    // e.g., && (typeof item.size === 'number' || item.size === null)
+                )) {
+                    return modelsArray as LollmsAvailableModel[]; // Now cast to the specific type
+                } else {
+                    console.warn(`Content of '${modelsDataKey}' array for '${bindingName}' is not in the expected LollmsAvailableModel format. Some items might be malformed:`, modelsArray);
+                    vscode.window.showErrorMessage(`Models data for '${bindingName}' has an unexpected item format.`);
+                    return null;
+                }
             } else {
-                console.warn(`Received invalid format for available models list for '${bindingName}':`, result);
+                // The overall structure is not as expected (e.g., no "models" key, or it's not an array)
+                console.warn(`Received invalid format for available models list for '${bindingName}'. Expected an object with an '${modelsDataKey}' array, but got:`, result);
                 vscode.window.showErrorMessage(`Received unexpected data format for models of '${bindingName}'.`);
                 return null;
             }
